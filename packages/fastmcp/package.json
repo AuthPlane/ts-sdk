@@ -49,7 +49,7 @@
 		"test:integration": "vitest run tests/auth.integration.test.ts"
 	},
 	"dependencies": {
-		"fastmcp": "^3.35.0"
+		"fastmcp": "^4.0.1"
 	},
 	"peerDependencies": {
 		"@authplane/sdk": "^0.0.0-dev.0"
