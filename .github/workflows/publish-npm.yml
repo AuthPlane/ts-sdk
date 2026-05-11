@@ -1,0 +1,130 @@
+name: Publish to npm
+
+# Tag-triggered publish. The three @authplane/* packages go to npm from
+# this workflow; release.yml only pushes the tag and lets this workflow
+# take over.
+#
+# Runs on any v*.*.* tag regardless of which branch it points to. The
+# tag itself is the authority — OIDC claim ref = refs/tags/vX.Y.Z, which
+# matches the `npm` environment's tag-only deployment policy.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: publish-npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/org/authplane
+    permissions:
+      contents: read
+      id-token: write   # required for npm provenance (Sigstore attestation)
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Derive version from tag
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag ${tag} is not a semantic v<X.Y.Z> version. Refusing to publish."
+            exit 1
+          fi
+          {
+            echo "tag=${tag}"
+            echo "version=${version}"
+          } >> "$GITHUB_OUTPUT"
+
+      # TS keeps versions in package.json (no hatch-vcs equivalent), so the
+      # tag's authority is only meaningful if the checked-out commit's
+      # package.json files already match. release.yml bumps them before
+      # tagging; this step is the cross-check that those writes happened
+      # and were included in the tagged commit.
+      - name: Verify package.json versions match the tag
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          for pkg in \
+            packages/sdk/package.json \
+            packages/mcp/package.json \
+            packages/fastmcp/package.json
+          do
+            pv="$(node -p "require('./$pkg').version")"
+            if [[ "$pv" != "$v" ]]; then
+              echo "::error::$pkg has version $pv but tag is v$v. Refusing to publish."
+              exit 1
+            fi
+          done
+          echo "All three packages report version $v ✓"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all workspaces
+        run: npm run build
+
+      - name: Pack tarballs for each workspace
+        run: |
+          cd packages/sdk && npm pack
+          cd ../mcp && npm pack
+          cd ../fastmcp && npm pack
+
+      - name: Upload built tarballs (for partial-publish recovery)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-v${{ steps.version.outputs.version }}
+          path: |
+            packages/sdk/*.tgz
+            packages/mcp/*.tgz
+            packages/fastmcp/*.tgz
+          if-no-files-found: error
+          retention-days: 30
+
+      # npm has no atomic multi-package publish. If a later publish fails
+      # after an earlier one succeeded, the version is already on the
+      # registry for the succeeded package(s). Recovery: download the
+      # dist-v<version> artifact and run `npm publish --provenance
+      # --access public` for the remaining tarball(s) at the same version.
+      - name: Publish @authplane/sdk to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public -w @authplane/sdk
+
+      - name: Publish @authplane/mcp to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public -w @authplane/mcp
+
+      - name: Publish @authplane/fastmcp to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public -w @authplane/fastmcp
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### npm publish"
+            echo ""
+            echo "- **Tag**: \`${{ steps.version.outputs.tag }}\`"
+            echo "- **Version**: \`${{ steps.version.outputs.version }}\`"
+            echo "- [@authplane/sdk](https://www.npmjs.com/package/@authplane/sdk/v/${{ steps.version.outputs.version }}) · [@authplane/mcp](https://www.npmjs.com/package/@authplane/mcp/v/${{ steps.version.outputs.version }}) · [@authplane/fastmcp](https://www.npmjs.com/package/@authplane/fastmcp/v/${{ steps.version.outputs.version }})"
+          } >> "$GITHUB_STEP_SUMMARY"

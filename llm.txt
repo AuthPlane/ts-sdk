@@ -1,0 +1,34 @@
+# Authplane TypeScript SDK — LLM Quick Guide
+
+Short index for agents. Keep this file compact.
+For full details and inlined examples, read `llm-full.txt`.
+
+## Scope
+
+- `packages/sdk` (`@authplane/sdk` — subpaths `./core` and `./auth` only)
+- `packages/mcp` (`@authplane/mcp`)
+- `packages/fastmcp` (`@authplane/fastmcp`)
+
+## Read Order
+
+1. `README.md`
+2. `llm-full.txt` → `Repository Topology`
+3. `llm-full.txt` → `Architectural Guardrails`
+4. package README files under `packages/*/README.md`
+
+## Rules Snapshot
+
+- Put protocol/security primitives under `@authplane/sdk/core`.
+- Put stateless OAuth protocol primitives under `@authplane/sdk/auth`.
+- Keep framework-specific wiring in adapters only.
+
+## Validation Snapshot
+
+- Root checks: see `llm-full.txt` → `Validation Commands (Root)` (uses `npm` + `package-lock.json`)
+- Per-package checks: see `llm-full.txt` → `Validation Commands (Package-Level)`
+
+## Demo Snapshot
+
+- Demo commands and scripts: see `llm-full.txt` → `Demo Flows`
+- Authserver prerequisites: see `llm-full.txt` → `Local authserver requirements`
+- Failure triage: see `llm-full.txt` → `Common Local Demo Pitfalls`

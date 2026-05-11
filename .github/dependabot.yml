@@ -1,0 +1,49 @@
+version: 2
+
+updates:
+  # npm workspaces (root package.json declares three workspaces; dependabot
+  # resolves the full graph via the root entry, so a single npm ecosystem
+  # block covers all three workspace packages).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - typescript
+    commit-message:
+      prefix: "deps"
+    open-pull-requests-limit: 10
+    groups:
+      # Only minor + patch updates are bundled. Majors fall out of the
+      # group and each gets its own PR so breaking changes are reviewed
+      # one at a time.
+      npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "ci"
+    open-pull-requests-limit: 5
+    groups:
+      # Same approach as the npm group: bundle minor + patch, let
+      # majors open as individual PRs.
+      actions-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

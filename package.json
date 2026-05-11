@@ -1,0 +1,28 @@
+{
+  "name": "authplane-ts-sdk",
+  "private": true,
+  "version": "0.0.0-dev.0",
+  "description": "Authplane TypeScript SDK",
+  "license": "Apache-2.0",
+  "workspaces": [
+    "packages/sdk",
+    "packages/mcp",
+    "packages/fastmcp"
+  ],
+  "engines": {
+    "node": ">=22",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "format": "npm run format --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "tsc -b",
+    "test": "npm run test -w @authplane/sdk && npm run test -w @authplane/mcp && npm run test -w @authplane/fastmcp",
+    "test:coverage": "npm run test:coverage -w @authplane/sdk && npm run test:coverage -w @authplane/mcp && npm run test:coverage -w @authplane/fastmcp",
+    "check": "npm run lint && npm run typecheck && npm run test:coverage"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.9"
+  }
+}

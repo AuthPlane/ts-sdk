@@ -1,0 +1,67 @@
+{
+	"name": "@authplane/fastmcp",
+	"version": "0.0.0-dev.0",
+	"description": "Authplane JWT validation adapter for FastMCP",
+	"keywords": [
+		"fastmcp",
+		"oauth",
+		"jwt",
+		"adapter",
+		"authplane"
+	],
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/AuthPlane/ts-sdk.git",
+		"directory": "packages/fastmcp"
+	},
+	"homepage": "https://github.com/AuthPlane/ts-sdk/tree/main/packages/fastmcp",
+	"bugs": {
+		"url": "https://github.com/AuthPlane/ts-sdk/issues"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"CHANGELOG.md",
+		"LICENSE",
+		"README.md"
+	],
+	"scripts": {
+		"prepack": "node ../../scripts/sync-package-files.mjs",
+		"build": "tsc -b",
+		"format": "biome format --write src package.json tsconfig.json",
+		"lint": "biome lint src --error-on-warnings",
+		"typecheck": "tsc -b",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage",
+		"test:integration": "vitest run tests/auth.integration.test.ts"
+	},
+	"dependencies": {
+		"fastmcp": "^3.35.0"
+	},
+	"peerDependencies": {
+		"@authplane/sdk": "^0.0.0-dev.0"
+	},
+	"devDependencies": {
+		"@types/node": "^24.3.0",
+		"@vitest/coverage-v8": "4.1.5",
+		"@authplane/sdk": "^0.0.0-dev.0",
+		"dotenv": "^17.3.1",
+		"tsx": "^4.20.6",
+		"typescript": "^5.6.3",
+		"vitest": "4.1.5",
+		"zod": "^3.24.0"
+	}
+}

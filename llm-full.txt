@@ -1,0 +1,231 @@
+# Authplane TypeScript SDK — Complete LLM Reference
+
+This file is the full, self-contained context for AI/code agents working in this
+repository.
+
+## Purpose
+
+Unified TypeScript SDK with framework adapters. It centralizes:
+
+1. Core SDK verification and OAuth primitives
+2. Stateful auth client facade
+3. Framework adapters for MCP and FastMCP
+4. Shared CI quality gates
+
+## Repository Topology
+
+| Path | Package | Purpose |
+| --- | --- | --- |
+| `packages/sdk` | `@authplane/sdk` | Unified SDK: `./core` (JWT/RS verification, discovery, OAuth helpers), `./auth` (OAuth client, token exchange, DPoP) |
+| `packages/mcp` | `@authplane/mcp` | Adapter for `@modelcontextprotocol/sdk` (auth, DPoP, URL elicitation) |
+| `packages/fastmcp` | `@authplane/fastmcp` | Adapter for FastMCP (auth, DPoP, URL elicitation) |
+| `.github/workflows/ci.yml` | n/a | Unified CI validation |
+| `README.md` | n/a | Human-facing repo usage |
+
+## Architectural Guardrails
+
+1. Keep reusable protocol/security behavior under `@authplane/sdk/core`.
+2. Keep OAuth protocol primitives under `@authplane/sdk/auth` (stateless helpers only).
+3. Keep framework-specific behavior in adapter packages only.
+4. Avoid duplicating protocol logic across packages.
+
+## Runtime and Tooling
+
+- Node.js `>=22`
+- npm workspaces (`package.json` `workspaces` + `package-lock.json`)
+- TypeScript + Vitest + Biome
+
+Install:
+
+```bash
+npm ci
+```
+
+## Validation Commands (Root)
+
+```bash
+npm run lint
+npm run typecheck
+npm run test
+npm run test:coverage
+npm run build
+npm run check
+```
+
+## Validation Commands (Package-Level)
+
+```bash
+npm run test -w @authplane/sdk
+npm run test -w @authplane/mcp
+npm run test -w @authplane/fastmcp
+```
+
+## Demo Flows
+
+### Adapter demo servers (FastMCP + MCP)
+
+Both adapter demos live under `packages/{fastmcp,mcp}/demo/` and are launched
+via their `run.sh`. Each `run.sh` requires `demo/.env` to exist (it `source`s
+the file before launching `mcpserver.ts`):
+
+```bash
+cd <TS_REPO_ROOT>/packages/fastmcp        # or packages/mcp
+cp demo/.env.example demo/.env             # then fill in CLIENT_SECRET
+./demo/run.sh
+```
+
+`mcpserver.ts` reads (in this order, with new names taking precedence):
+
+- `AUTHPLANE_ISSUER` / legacy `ISSUER_URL` (default `http://localhost:9000`)
+- `AUTHPLANE_BASE_URL` / legacy `BASE_URL` (default `http://localhost:8080` for
+  FastMCP) and `AUTHPLANE_RESOURCE` / legacy `RESOURCE_URL` for MCP
+- `AUTHPLANE_CLIENT_ID` / legacy `CLIENT_ID` (defaults to the resource URL)
+- `AUTHPLANE_CLIENT_SECRET` / legacy `CLIENT_SECRET` (required)
+
+Both adapters serve `http://localhost:8080/mcp`. The FastMCP demo runs
+preflight `curl` against the issuer's metadata endpoint and aborts early if
+the authserver is not reachable.
+
+### Manual end-to-end smoke
+
+`scripts/` contains helpers that boot a local authserver and run a smoke
+check end-to-end (mirrors the Python SDK's helpers):
+
+```bash
+# Start local authserver and register client / scopes / user.
+bash scripts/manual-e2e-setup.sh
+
+# Smoke against the MCP adapter (default).
+bash scripts/manual-e2e-smoke.sh --skip-setup
+
+# Smoke against the FastMCP adapter.
+bash scripts/manual-e2e-smoke.sh --adapter fastmcp --skip-setup
+```
+
+Optional overrides: `ISSUER_URL`, `BASE_URL`, `RESOURCE_URL`.
+
+### TypeScript client demo example (DPoP + token exchange)
+
+`AuthplaneClient.create` is the async factory; the bare constructor is
+private. Pass credentials as `auth: { clientId, clientSecret }` — that field
+also accepts any `AuthProvider` implementation (e.g. for `private_key_jwt`
+or mTLS-aware setups). Token operations return `TokenResponse` objects with
+camelCase fields (`accessToken`, `tokenType`, `expiresIn`).
+`clientCredentials` takes `scopes: string[]`; RFC 8693 token exchange goes
+through `client.exchange({...})`. DPoP is wired by constructing a
+`DPoPProvider` with `DPoPKeyMaterial` (from PEM or a generated keypair); there
+is no `createDPoPSigner` helper.
+
+```ts
+import { generateKeyPairSync } from "node:crypto";
+import { exportJWK } from "jose";
+import {
+  AuthplaneClient,
+  DPoPKeyMaterial,
+  DPoPProvider,
+} from "@authplane/sdk/core";
+
+async function main(): Promise<void> {
+  const issuer = process.env.AUTHPLANE_ISSUER ?? "http://127.0.0.1:9000";
+  const clientId = process.env.AUTHPLANE_CLIENT_ID!;
+  const clientSecret = process.env.AUTHPLANE_CLIENT_SECRET!;
+  const scope = process.env.DEMO_SCOPE ?? "tools/add";
+  const resource =
+    process.env.AUTHPLANE_RESOURCE ?? "http://localhost:8080/mcp";
+
+  // Ephemeral EC key for outbound DPoP proofs.
+  const { privateKey, publicKey } = generateKeyPairSync("ec", {
+    namedCurve: "P-256",
+  });
+  const dpop = new DPoPProvider({
+    keyMaterial: new DPoPKeyMaterial({
+      privateKey,
+      publicJwk: await exportJWK(publicKey),
+      algorithm: "ES256",
+    }),
+  });
+
+  const client = await AuthplaneClient.create({
+    issuer,
+    auth: { clientId, clientSecret },
+    dpopProvider: dpop,
+    devMode: true, // allow http://localhost issuer
+  });
+
+  // 1) client_credentials (subject token)
+  const subject = await client.clientCredentials([scope]);
+  console.log("token_type:", subject.tokenType);
+  console.log("subject access_token length:", subject.accessToken.length);
+
+  // 2) token exchange (scope narrowing + audience binding)
+  const exchanged = await client.exchange({
+    subjectToken: subject.accessToken,
+    scope,
+    resources: [resource],
+  });
+  console.log("token_type:", exchanged.tokenType);
+  console.log("exchanged access_token length:", exchanged.accessToken.length);
+}
+
+main().catch((err) => {
+  console.error("Demo failed:", err);
+  process.exit(1);
+});
+```
+
+Run it with the same env vars the adapter demos use:
+
+```bash
+AUTHPLANE_ISSUER="http://127.0.0.1:9000" \
+AUTHPLANE_RESOURCE="http://localhost:8080/mcp" \
+AUTHPLANE_CLIENT_ID="<CLIENT_ID>" \
+AUTHPLANE_CLIENT_SECRET="<CLIENT_SECRET>" \
+DEMO_SCOPE="tools/add" \
+npx tsx path/to/demo-client.ts
+```
+
+### Local authserver requirements
+
+For local end-to-end demos, run the Authplane authserver on `http://127.0.0.1:9000` with:
+
+- `AUTHPLANE_CLIENT_CREDENTIALS_ENABLED=true`
+- `AUTHPLANE_TOKEN_EXCHANGE_ENABLED=true`
+- `AUTHPLANE_DPOP_ENABLED=true`
+- `AUTHPLANE_TOKEN_EXCHANGE_ALLOW_SELF_EXCHANGE=true` (needed for same-client demo flows)
+
+The OAuth client used by demos must be registered with:
+
+- grant types:
+  - `client_credentials`
+  - `urn:ietf:params:oauth:grant-type:token-exchange`
+- scopes:
+  - `tools/add`
+  - `tools/multiply`
+  - `tools/consent_demo` (only the `@authplane/mcp` demo registers and uses this scope; the demo authserver also seeds it on the calculator Mint resource)
+
+## Common Local Demo Pitfalls
+
+- `client_credentials grant is not enabled`
+  - OAuth server is missing `AUTHPLANE_CLIENT_CREDENTIALS_ENABLED=true`
+- `client is not authorized for this grant type`
+  - client registration is missing `urn:ietf:params:oauth:grant-type:token-exchange`
+- `requested scope is invalid or not allowed`
+  - requested token exchange scope was not registered or assigned to the client
+- `invalid API key`
+  - admin API requests are using a key that does not match server startup configuration
+
+## Typical Agent Tasks
+
+- Add/adjust verification behavior in `@authplane/sdk/core`
+- Update OAuth primitive operations/error handling in `@authplane/sdk/auth`
+- Align adapters with SDK API changes
+- Improve demo reliability and docs
+- Add tests for behavior/regression coverage
+
+## Editing Expectations
+
+- Keep API semantics stable unless intentionally changing behavior.
+- Prefer minimal, scoped changes.
+- Include tests for behavioral changes.
+- Keep docs aligned with actual package paths and demo commands.
+

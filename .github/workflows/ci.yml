@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22, 24]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Check out shared conformance catalog
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: AuthPlane/conformance
+          path: conformance
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint and typecheck
+        run: |
+          npm run lint
+          npm run typecheck
+
+      - name: Run coverage
+        env:
+          CONFORMANCE_CATALOG_PATH: ${{ github.workspace }}/conformance/oauth-sdk-conformance-catalog.yaml
+        run: npm run test:coverage
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Validate npm package contents
+        run: |
+          cd packages/sdk && npm pack --dry-run
+          cd ../mcp && npm pack --dry-run
+          cd ../fastmcp && npm pack --dry-run

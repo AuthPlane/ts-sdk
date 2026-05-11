@@ -1,0 +1,22 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.turbo/
+.DS_Store
+.env
+**/.env
+packages/*/demo/.env
+.conformance-results/
+**/.conformance-results/
+packages/sdk/conformance-report.json
+packages/sdk/conformance-report.md
+
+# Generated at pack time by scripts/sync-package-files.mjs (prepack hook).
+# Root LICENSE and CHANGELOG.md are the source of truth.
+packages/*/LICENSE
+packages/*/CHANGELOG.md
+
+# Development-task docs (specs, plans, handoffs) — see CONTRIBUTING.md
+# policy. User-facing docs like docs/user-guide.md are tracked normally.
+docs/superpowers/

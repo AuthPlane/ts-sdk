@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@authplane-sdk/core": ["packages/sdk/src/core/index.ts"],
+      "@authplane-sdk/core/*": ["packages/sdk/src/core/*"],
+      "@authplane-sdk/auth": ["packages/sdk/src/auth/index.ts"],
+      "@authplane-sdk/auth/*": ["packages/sdk/src/auth/*"],
+      "@authplane-adapters/mcp": ["packages/mcp/src/index.ts"],
+      "@authplane-adapters/mcp/*": ["packages/mcp/src/*"],
+      "@authplane-adapters/fastmcp": ["packages/fastmcp/src/index.ts"],
+      "@authplane-adapters/fastmcp/*": ["packages/fastmcp/src/*"]
+    },
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "declaration": true,
+    "declarationMap": false,
+    "sourceMap": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "composite": true,
+    "incremental": true,
+    "types": ["node"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  }
+}

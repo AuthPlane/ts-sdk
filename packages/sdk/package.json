@@ -1,0 +1,69 @@
+{
+	"name": "@authplane/sdk",
+	"version": "0.0.0-dev.0",
+	"description": "Authplane TypeScript SDK — JWT validation (resource server) and OAuth client (token acquisition)",
+	"keywords": [
+		"oauth",
+		"oauth2",
+		"jwt",
+		"mcp",
+		"security",
+		"authplane"
+	],
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/AuthPlane/ts-sdk.git",
+		"directory": "packages/sdk"
+	},
+	"homepage": "https://github.com/AuthPlane/ts-sdk/tree/main/packages/sdk",
+	"bugs": {
+		"url": "https://github.com/AuthPlane/ts-sdk/issues"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"type": "module",
+	"exports": {
+		"./core": {
+			"types": "./dist/core/index.d.ts",
+			"import": "./dist/core/index.js",
+			"default": "./dist/core/index.js"
+		},
+		"./auth": {
+			"types": "./dist/auth/index.d.ts",
+			"import": "./dist/auth/index.js",
+			"default": "./dist/auth/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"CHANGELOG.md",
+		"LICENSE",
+		"README.md"
+	],
+	"scripts": {
+		"prepack": "node ../../scripts/sync-package-files.mjs",
+		"build": "tsc -b",
+		"format": "biome format --write src package.json tsconfig.json vitest.config.ts",
+		"lint": "biome lint src --error-on-warnings && npm run check:arch",
+		"check:arch": "node ./scripts/check-auth-leaf.mjs",
+		"typecheck": "tsc -b",
+		"test": "AUTHPLANE_CONFORMANCE_RUN_ID=$(node -e \"process.stdout.write(String(Date.now()))\") vitest run",
+		"test:conformance": "AUTHPLANE_CONFORMANCE_RUN_ID=$(node -e \"process.stdout.write(String(Date.now()))\") vitest run",
+		"test:coverage": "AUTHPLANE_CONFORMANCE_RUN_ID=$(node -e \"process.stdout.write(String(Date.now()))\") vitest run --coverage"
+	},
+	"dependencies": {
+		"ipaddr.js": "^2.3.0",
+		"jose": "^5.9.6"
+	},
+	"devDependencies": {
+		"@types/node": "^24.3.0",
+		"@vitest/coverage-v8": "4.1.5",
+		"c8": "^11.0.0",
+		"tsx": "^4.20.6",
+		"typescript": "^5.6.3",
+		"vitest": "4.1.5",
+		"yaml": "^2.8.2"
+	}
+}

@@ -1,0 +1,290 @@
+name: Cut release branch
+
+# Step 1 of the single-branch release: cut the branch that will be
+# stabilized and tagged by `release.yml`.
+#
+# Two modes, selected by whether `hotfixBase` is provided:
+#
+#   - Current-line release (hotfixBase empty):
+#       Branches off the repository's default branch. New branch is
+#       `release/v<releaseVersion>`. Bumps packages to `<version>-rc.0`,
+#       commits, pushes; opens a PR to bump the default branch to the
+#       next `-dev.N`. Requires CHANGELOG has `## [Unreleased]`.
+#
+#   - Older-line hotfix (hotfixBase = v<A.B.C>):
+#       Branches off the given tag. New branch is `hotfix/v<releaseVersion>`.
+#       No version edits at cut time — `release.yml` writes the target
+#       version when it tags. No next-dev bump PR is opened.
+#       Refuses unless:
+#         - hotfixBase is an existing vX.Y.Z tag
+#         - releaseVersion is on the same minor line as hotfixBase (same
+#           major.minor, patch strictly greater)
+#         - (major, minor) is strictly older than the default branch's
+#           latest vX.Y.Z tag (so current-line patches go through the
+#           release/v* path instead).
+#
+# Trigger: maintainer dispatches from the Actions UI on the default branch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      releaseVersion:
+        description: "Version being released (e.g. 1.3.0). No prerelease suffix."
+        required: true
+        type: string
+      hotfixBase:
+        description: "Optional: base tag for a hotfix cut (e.g. v0.5.1). Leave empty for a current-line release off the default branch."
+        required: false
+        type: string
+        default: ""
+      nextDevVersion:
+        description: "Next development version on the default branch (e.g. 1.3.1-dev.0). Defaults to next patch dev version. Ignored when hotfixBase is set."
+        required: false
+        type: string
+
+concurrency:
+  group: cut-release
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Refuse if not dispatched from the default branch
+        run: |
+          ref="${{ github.ref_name }}"
+          default="${{ github.event.repository.default_branch }}"
+          if [[ "$ref" != "$default" ]]; then
+            echo "::error::This workflow must be dispatched from '$default' (got: $ref)."
+            exit 1
+          fi
+
+      - name: Validate inputs and compute branch name
+        id: validate
+        run: |
+          release="${{ inputs.releaseVersion }}"
+          base="${{ inputs.hotfixBase }}"
+          if ! [[ "$release" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::releaseVersion must match X.Y.Z (got: $release)"
+            exit 1
+          fi
+          if [[ -n "$base" ]] && ! [[ "$base" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::hotfixBase must match vX.Y.Z (got: $base)"
+            exit 1
+          fi
+
+          if [[ -z "$base" ]]; then
+            branch="release/v$release"
+            mode="release"
+          else
+            branch="hotfix/v$release"
+            mode="hotfix"
+          fi
+
+          next=""
+          if [[ "$mode" == "release" ]]; then
+            next="${{ inputs.nextDevVersion }}"
+            if [[ -z "$next" ]]; then
+              IFS='.' read -r major minor patch <<< "$release"
+              next="${major}.${minor}.$((patch + 1))-dev.0"
+            fi
+            if ! [[ "$next" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$ ]]; then
+              echo "::error::nextDevVersion must match X.Y.Z-dev.N (got: $next)"
+              exit 1
+            fi
+          fi
+
+          {
+            echo "release=$release"
+            echo "releaseRc=${release}-rc.0"
+            echo "branch=$branch"
+            echo "tag=v$release"
+            echo "mode=$mode"
+            echo "nextDev=$next"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out default branch with full history and tags
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Refuse if branch or tag already exist
+        run: |
+          branch="${{ steps.validate.outputs.branch }}"
+          tag="${{ steps.validate.outputs.tag }}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "::error::Branch $branch already exists. Aborting."
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "$tag" >/dev/null; then
+            echo "::error::Tag $tag already exists. Aborting."
+            exit 1
+          fi
+
+      # Hotfix-mode guards: ensure hotfixBase exists, the new version is a
+      # strict patch bump on the same minor line, and the line is strictly
+      # older than the default branch's latest v<X.Y.Z>.
+      - name: Validate hotfixBase and older-line invariant
+        if: steps.validate.outputs.mode == 'hotfix'
+        run: |
+          default="${{ github.event.repository.default_branch }}"
+          base="${{ inputs.hotfixBase }}"
+          v="${{ steps.validate.outputs.release }}"
+
+          if ! git rev-parse --verify "refs/tags/$base" >/dev/null 2>&1; then
+            echo "::error::hotfixBase tag '$base' does not exist in the repository."
+            exit 1
+          fi
+
+          [[ "$base" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]
+          base_major="${BASH_REMATCH[1]}"
+          base_minor="${BASH_REMATCH[2]}"
+          base_patch="${BASH_REMATCH[3]}"
+
+          [[ "$v" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]
+          new_major="${BASH_REMATCH[1]}"
+          new_minor="${BASH_REMATCH[2]}"
+          new_patch="${BASH_REMATCH[3]}"
+
+          if (( new_major != base_major )) || (( new_minor != base_minor )); then
+            echo "::error::releaseVersion v$v is not on the same minor line as hotfixBase $base (expected v${base_major}.${base_minor}.*)."
+            exit 1
+          fi
+          if (( new_patch <= base_patch )); then
+            echo "::error::releaseVersion v$v must be a strict patch bump over hotfixBase $base."
+            exit 1
+          fi
+
+          if ! main_tag=$(git describe --tags --abbrev=0 "origin/$default" 2>/dev/null); then
+            echo "::error::Cannot determine $default's latest tag — has a release ever shipped? If not, use a release/v* cut for the first release."
+            exit 1
+          fi
+          echo "$default's latest tag: $main_tag"
+
+          if ! [[ "$main_tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::$default's latest tag '$main_tag' does not match vX.Y.Z."
+            exit 1
+          fi
+          main_major="${BASH_REMATCH[1]}"
+          main_minor="${BASH_REMATCH[2]}"
+
+          if (( new_major > main_major )) || { (( new_major == main_major )) && (( new_minor >= main_minor )); }; then
+            echo "::error::hotfix/v$v is on line v${new_major}.${new_minor}, which is not strictly older than $default's line v${main_major}.${main_minor}."
+            echo "::error::Current-line patches must use a release/v* cut (leave hotfixBase empty)."
+            exit 1
+          fi
+          echo "Confirmed older-line hotfix: v${new_major}.${new_minor} < v${main_major}.${main_minor}"
+
+      - name: Set up Node
+        if: steps.validate.outputs.mode == 'release'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify CHANGELOG has Unreleased notes
+        if: steps.validate.outputs.mode == 'release'
+        run: node scripts/release/verify-changelog-unreleased.mjs
+
+      - name: Install dependencies
+        if: steps.validate.outputs.mode == 'release'
+        run: npm ci
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Release mode: cut from default, bump to -rc.0, commit, push.
+      # Hotfix mode: cut from the base tag (no version edits — release.yml
+      # writes the target version when it tags).
+      - name: Create and push release/hotfix branch
+        run: |
+          branch="${{ steps.validate.outputs.branch }}"
+          mode="${{ steps.validate.outputs.mode }}"
+          if [[ "$mode" == "hotfix" ]]; then
+            base="${{ inputs.hotfixBase }}"
+            git checkout -b "$branch" "refs/tags/$base"
+            git push origin "$branch"
+          else
+            git checkout -b "$branch"
+            new_version="${{ steps.validate.outputs.releaseRc }}"
+            node scripts/release/set-package-versions.mjs "$new_version"
+            git add -A
+            git commit -m "release-prep: ${{ steps.validate.outputs.releaseRc }}"
+            git push origin "$branch"
+          fi
+
+      # Release mode only: bump the default branch to the next dev version
+      # on a separate chore branch, then open a PR.
+      - name: Bump default branch to next dev version
+        if: steps.validate.outputs.mode == 'release'
+        run: |
+          default="${{ github.event.repository.default_branch }}"
+          git checkout "$default"
+          new_version="${{ steps.validate.outputs.nextDev }}"
+          node scripts/release/set-package-versions.mjs "$new_version"
+
+      - name: Open PR with next-dev bump
+        if: steps.validate.outputs.mode == 'release'
+        id: cpr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: chore/bump-${{ github.event.repository.default_branch }}-${{ steps.validate.outputs.nextDev }}
+          base: ${{ github.event.repository.default_branch }}
+          commit-message: "chore: bump ${{ github.event.repository.default_branch }} to ${{ steps.validate.outputs.nextDev }}"
+          title: "chore: bump ${{ github.event.repository.default_branch }} to ${{ steps.validate.outputs.nextDev }}"
+          body: |
+            Auto-generated after cutting **${{ steps.validate.outputs.branch }}**.
+
+            `${{ github.event.repository.default_branch }}` now targets the next development cycle while
+            `${{ steps.validate.outputs.branch }}` stabilizes for release.
+          labels: release,automated
+          delete-branch: true
+
+      # Best-effort auto-merge. Requires `allow_auto_merge` on the repo,
+      # which GitHub gates behind Pro or public visibility. If auto-merge
+      # isn't enabled (e.g. private free-tier repo), this step fails
+      # gracefully and the maintainer merges the bump PR manually.
+      - name: Enable auto-merge on next-dev bump PR
+        if: steps.validate.outputs.mode == 'release' && steps.cpr.outputs.pull-request-number
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge ${{ steps.cpr.outputs.pull-request-number }} --auto --squash
+
+      - name: Summary
+        run: |
+          default="${{ github.event.repository.default_branch }}"
+          v="${{ steps.validate.outputs.release }}"
+          branch="${{ steps.validate.outputs.branch }}"
+          mode="${{ steps.validate.outputs.mode }}"
+          {
+            if [[ "$mode" == "hotfix" ]]; then
+              echo "### Hotfix branch cut"
+              echo ""
+              echo "- **Release version**: \`$v\`"
+              echo "- **Branch**: \`$branch\` (based on \`${{ inputs.hotfixBase }}\`)"
+              echo ""
+              echo "**Next steps**:"
+              echo "1. On \`$branch\`: add a \`## [$v]\` section to \`CHANGELOG.md\`, land the fix (cherry-pick or direct commit)."
+              echo "2. When ready, dispatch the **Release** workflow from \`$branch\` (optionally with dry-run first)."
+              echo "3. After publication, backport any commits that should also reach \`$default\` via the **Backport fixes** workflow using \`fromBranch=v$v\` (the tag — the branch is deleted after release)."
+            else
+              echo "### Release branch cut"
+              echo ""
+              echo "- **Release version**: \`$v\`"
+              echo "- **Release branch**: \`$branch\`"
+              echo "- **Release branch package version**: \`${{ steps.validate.outputs.releaseRc }}\`"
+              echo "- **Next dev version**: \`${{ steps.validate.outputs.nextDev }}\`"
+              echo ""
+              echo "**Next steps**:"
+              echo "1. Review and merge the **next-dev bump PR** (auto-merge attempted; if the repo doesn't allow auto-merge, merge manually)."
+              echo "2. Stabilize \`$branch\` — add \`## [$v]\` section to \`CHANGELOG.md\` and land any last-minute fixes."
+              echo "3. Dispatch the **Release** workflow from \`$branch\` (optionally with dry-run first)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,291 @@
+name: Release
+
+# Step 2 of the single-branch release flow: take the stabilized
+# release/v* or hotfix/v* branch, run tests, bump package versions to
+# the target X.Y.Z, commit on the branch, tag vX.Y.Z, build + pack all
+# three packages for local validation, atomic-push branch + tag, create
+# the GitHub Release, and delete the source branch on success.
+#
+# Branch conventions:
+#   - release/v<X.Y.Z>: current-line release off the default branch. The
+#     branch carries X.Y.Z-rc.N in package.json; this workflow strips
+#     to X.Y.Z.
+#   - hotfix/v<X.Y.Z>: patch for an older minor line. The branch is cut
+#     from an older tag (package.json reflects that older version); the
+#     workflow bumps directly to X.Y.Z. Refuses dispatch unless
+#     (branch.major, branch.minor) is strictly older than the default
+#     branch's latest v<X.Y.Z> tag — current-line patches must use
+#     release/v*.
+#
+# npm publication is handled separately by `publish-npm.yml`, triggered
+# by the tag push. This keeps the OIDC identity tied to the tag itself.
+#
+# Trigger: maintainer dispatches from the Actions UI with a release/v*
+# or hotfix/v* branch selected. Branch name is the source of truth for
+# the version that will become the tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: "Dry run: bump, test, build, pack locally; skip atomic push, GitHub Release, branch deletion, and publish-npm.yml trigger."
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Refuse if not dispatched from a release/v* or hotfix/v* branch
+        run: |
+          ref="${{ github.ref_name }}"
+          if [[ ! "$ref" =~ ^(release|hotfix)/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::This workflow must be dispatched from a release/v<X.Y.Z> or hotfix/v<X.Y.Z> branch (got: $ref)"
+            exit 1
+          fi
+          echo "Dispatched from $ref"
+
+      - name: Check out repo with full history and tags
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Check out shared conformance catalog
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: AuthPlane/conformance
+          path: conformance
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Derive version from branch name
+        id: version
+        run: |
+          ref="${{ github.ref_name }}"
+          version="${ref##*/v}"
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Refuse if tag already exists
+        run: |
+          if git ls-remote --exit-code --tags origin "${{ steps.version.outputs.tag }}" >/dev/null; then
+            echo "::error::Tag ${{ steps.version.outputs.tag }} already exists. Aborting."
+            exit 1
+          fi
+
+      # hotfix/v* is reserved for patches to an older minor line. Refuse
+      # dispatch if the branch's (major, minor) is not strictly less than
+      # the default branch's latest released (major, minor). Current-line
+      # patches should use release/v*.
+      - name: Refuse if hotfix branch is not strictly an older-line patch
+        if: startsWith(github.ref_name, 'hotfix/')
+        run: |
+          default="${{ github.event.repository.default_branch }}"
+          git fetch origin "$default" --tags --no-recurse-submodules
+          if ! main_tag=$(git describe --tags --abbrev=0 "origin/$default" 2>/dev/null); then
+            echo "::error::Cannot determine $default's latest tag — has a release ever shipped? If not, use release/v* for the first release."
+            exit 1
+          fi
+          echo "$default's latest tag: $main_tag"
+
+          if ! [[ "$main_tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::$default's latest tag '$main_tag' does not match vX.Y.Z."
+            exit 1
+          fi
+          main_major="${BASH_REMATCH[1]}"
+          main_minor="${BASH_REMATCH[2]}"
+
+          v="${{ steps.version.outputs.version }}"
+          [[ "$v" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]
+          br_major="${BASH_REMATCH[1]}"
+          br_minor="${BASH_REMATCH[2]}"
+
+          if (( br_major > main_major )) || { (( br_major == main_major )) && (( br_minor >= main_minor )); }; then
+            echo "::error::hotfix/v${v} is on line v${br_major}.${br_minor}, which is not strictly older than $default's line v${main_major}.${main_minor}."
+            echo "::error::Current-line patches must use release/v*, not hotfix/v*."
+            exit 1
+          fi
+          echo "Confirmed older-line patch: v${br_major}.${br_minor} < v${main_major}.${main_minor}"
+
+      # Release mode: the branch was cut with X.Y.Z-rc.N, and all three
+      # workspace package.jsons should agree on that RC version.
+      - name: Sanity check release-branch package versions
+        if: startsWith(github.ref_name, 'release/')
+        run: |
+          pkg_version=$(node -p "require('./packages/sdk/package.json').version")
+          if [[ ! "$pkg_version" =~ -rc\.[0-9]+$ ]]; then
+            echo "::error::Release branch package version must end with -rc.N (got: $pkg_version)"
+            exit 1
+          fi
+          stem="${pkg_version%-rc.*}"
+          branch_version="${{ steps.version.outputs.version }}"
+          if [[ "$stem" != "$branch_version" ]]; then
+            echo "::error::Branch version ($branch_version) does not match package version stem ($stem, from $pkg_version)"
+            exit 1
+          fi
+          for pkg in \
+            packages/mcp/package.json \
+            packages/fastmcp/package.json
+          do
+            v="$(node -p "require('./$pkg').version")"
+            if [[ "$v" != "$pkg_version" ]]; then
+              echo "::error::$pkg version ($v) does not match @authplane/sdk version ($pkg_version)"
+              exit 1
+            fi
+          done
+
+      - name: Verify CHANGELOG entry exists for this version
+        run: |
+          if ! grep -q "^## \\[${{ steps.version.outputs.version }}\\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no entry for ## [${{ steps.version.outputs.version }}]"
+            exit 1
+          fi
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Install + test against the branch-as-is. Workspaces resolve the
+      # adapter→core dep locally by package name (not version), so tests
+      # pass whether package.json reports -rc.N (release) or the older
+      # tag's version (hotfix). The version bump happens after tests, as
+      # part of the single release commit.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint, typecheck, and test
+        env:
+          CONFORMANCE_CATALOG_PATH: ${{ github.workspace }}/conformance/oauth-sdk-conformance-catalog.yaml
+        run: |
+          npm run lint
+          npm run typecheck
+          npm run test:coverage
+
+      # Bump package versions to X.Y.Z. On release branches this strips
+      # the -rc.N suffix; on hotfix branches it moves from the older tag
+      # version to the target patch. The script also syncs
+      # package-lock.json workspace snapshots in place, so no re-install.
+      - name: Bump package versions to ${{ steps.version.outputs.version }}
+        run: node scripts/release/set-package-versions.mjs "${{ steps.version.outputs.version }}"
+
+      - name: Commit release version bump on branch
+        run: |
+          git add -A
+          git commit --allow-empty -m "release: ${{ steps.version.outputs.version }}"
+
+      - name: Capture release commit SHA
+        id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Create annotated tag locally
+        run: |
+          git tag -a "${{ steps.version.outputs.tag }}" \
+            -m "Release ${{ steps.version.outputs.tag }}"
+
+      # Build + pack as post-tag local validation. publish-npm.yml rebuilds
+      # and publishes on the tag push, so the tarballs here are only a
+      # pre-flight check.
+      - name: Build and pack tarballs (local validation)
+        run: |
+          npm run build
+          cd packages/sdk && npm pack
+          cd ../mcp && npm pack
+          cd ../fastmcp && npm pack
+
+      - name: Dry run short-circuit notice
+        if: ${{ inputs.dryRun }}
+        run: |
+          echo "::notice::Dry run — skipping atomic push, GitHub Release, branch deletion, and publish-npm.yml trigger. Release commit SHA (would-be): ${{ steps.sha.outputs.sha }}"
+
+      - name: Atomic push of release branch and tag
+        if: ${{ !inputs.dryRun }}
+        run: |
+          git push --atomic origin "$GITHUB_REF_NAME" "${{ steps.version.outputs.tag }}"
+          echo "::notice::Released commit: ${{ steps.sha.outputs.sha }}"
+
+      - name: Extract CHANGELOG entry for release notes
+        if: ${{ !inputs.dryRun }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          sha="${{ steps.sha.outputs.sha }}"
+          {
+            echo "_Released commit: \`$sha\`_"
+            echo ""
+            awk "/^## \[$version\]/{flag=1;next} /^## \[/{flag=0} flag" CHANGELOG.md
+          } > /tmp/release-notes.md
+          if [[ $(wc -l < /tmp/release-notes.md) -le 2 ]]; then
+            echo "See CHANGELOG.md for details." >> /tmp/release-notes.md
+          fi
+
+      - name: Create GitHub Release
+        if: ${{ !inputs.dryRun }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --notes-file /tmp/release-notes.md
+
+      # Delete the source branch (release/v* or hotfix/v*) on success. The
+      # branch ruleset must allow the bot to delete. If this fails, warn
+      # loudly but do not fail the workflow — the release is already live.
+      - name: Delete source branch on remote
+        if: ${{ !inputs.dryRun }}
+        continue-on-error: true
+        id: delete
+        run: git push origin --delete "$GITHUB_REF_NAME"
+
+      - name: Warn if delete failed
+        if: ${{ !inputs.dryRun && steps.delete.outcome == 'failure' }}
+        run: |
+          echo "::warning::Source branch delete failed. Run manually: git push origin --delete $GITHUB_REF_NAME"
+
+      - name: Summary
+        if: always()
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          sha="${{ steps.sha.outputs.sha }}"
+          if [[ "${{ inputs.dryRun }}" == "true" ]]; then
+            {
+              echo "### Dry run complete"
+              echo ""
+              echo "- **Version**: \`$v\` (not published)"
+              echo "- **Would-be released commit**: \`$sha\`"
+              echo "- Version bump, tests, build, and pack — all succeeded."
+              echo "- Atomic push, GitHub Release, npm publish, and branch delete were skipped."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### Release tag pushed"
+              echo ""
+              echo "- **Version**: \`$v\`"
+              echo "- **Released commit**: \`$sha\`"
+              echo "- **Tag**: \`v$v\` (pushed — triggers \`publish-npm.yml\`)"
+              echo "- **GitHub Release**: ${{ github.server_url }}/${{ github.repository }}/releases/tag/v$v"
+              if [[ "${{ steps.delete.outcome }}" != "success" ]]; then
+                echo ""
+                echo "⚠️ **Branch delete failed — run manually:** \`git push origin --delete $GITHUB_REF_NAME\`"
+              fi
+              echo ""
+              echo "**Follow-up:**"
+              echo "- npm publish is handled by **publish-npm.yml**, which triggered on the tag push. Watch that run for the actual registry upload."
+              echo "- If any commits on this branch should reach the default branch, dispatch **Backport fixes** with \`fromBranch=${{ steps.version.outputs.tag }}\` (the tag — the branch is deleted after release)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
