@@ -103,7 +103,7 @@ describe.skipIf(skipCatalog)("conformance catalog alignment", () => {
     const conformanceIds = extractConformanceIdsFromDirs([
       // Regular unit tests that wrap conformanceCase(...)
       resolve(__dirname, "..", "tests"),
-      // Python-like conformance suite layout: packages/sdk/conformance-tests/*
+      // conformance suite layout: packages/sdk/conformance-tests/*
       __dirname,
     ]);
 

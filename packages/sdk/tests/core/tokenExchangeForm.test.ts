@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { exchange, FetchSettings } from "../../src/core/index.js";
 
 describe("exchangeToken form encoding", () => {
-  it("sends repeated resource/audience params (RFC 8693, Python parity)", async () => {
+  it("sends repeated resource/audience params (RFC 8693)", async () => {
     let receivedBody = "";
     const server = createServer((req, res) => {
       if (req.url === "/token" && req.method === "POST") {

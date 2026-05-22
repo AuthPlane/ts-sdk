@@ -19,8 +19,6 @@ import {
 	staticMetadataFetcher,
 } from "./helpers.js";
 
-// Python parity: mirrors `conformance-tests/test_rfc8414_conformance.py`.
-
 const NO_SSRF = new FetchSettings({
 	ssrfProtection: false,
 	allowHttp: true,
@@ -180,12 +178,11 @@ conformanceCase(
 		// Catalog stimulus: `client._on_metadata_changed` side-effect must rebind
 		// JWKS fetching when metadata.jwks_uri changes.
 		//
-		// Python mirrors this by invoking the private `_on_metadata_changed` and
-		// asserting the private `_jwks_uri`. TS has no equivalent public method,
-		// so this test likewise reaches into private state to force a metadata
-		// refetch and then exercises the end-to-end side effect: a token signed
-		// with the v2 key must verify, which is only possible if the JWKS cache
-		// now points at /jwks-v2.json.
+		// TS has no equivalent public method, so this test reaches into private
+		// state to invoke `_on_metadata_changed` and force a metadata refetch,
+		// then exercises the end-to-end side effect: a token signed with the v2
+		// key must verify, which is only possible if the JWKS cache now points
+		// at /jwks-v2.json.
 
 		const v1 = await generateEs256Keypair("key-v1");
 		const v2 = await generateEs256Keypair("key-v2");

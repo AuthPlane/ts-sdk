@@ -148,8 +148,6 @@ export class CircuitOpenError extends AuthplaneError {
  * subclass mapped from `error: "invalid_grant"` in the AS response and extends
  * `AuthError`. `InvalidGrant` is a top-level `AuthplaneError` for the same
  * domain failure surfaced through token-exchange flows. Maps to HTTP 401.
- *
- * Python parity with `authplane.errors.InvalidGrant`.
  */
 export class InvalidGrant extends AuthplaneError {
 	public constructor(message = ERROR_MESSAGES.invalidGrant) {
@@ -160,7 +158,7 @@ export class InvalidGrant extends AuthplaneError {
 
 /**
  * Map an SDK or OAuth error to the HTTP status code a resource server should
- * return. Parity with Python's `authplane.errors.http_status`.
+ * return.
  *
  * - 403 for {@link InsufficientScope}.
  * - 503 for {@link JWKSFetchError} and {@link MetadataFetchError} (the AS is
@@ -194,26 +192,66 @@ export function httpStatus(error: unknown): number {
 }
 
 /**
+ * Sanitise a value spliced into a quoted-string parameter of the
+ * `WWW-Authenticate` header (RFC 9110 §11.4). Strip CR, LF, double-quote
+ * and backslash so a crafted error message (or operator-supplied
+ * `resourceMetadataUrl` / `realm`) can't terminate the parameter or
+ * inject a new header field.
+ */
+function sanitiseHeaderValue(value: string): string {
+	return value.replace(/[\r\n"\\]+/g, " ").trim();
+}
+
+/**
  * Build an RFC 6750 §3 `WWW-Authenticate` header value.
  *
  * Maps SDK errors to the correct error code and authentication scheme:
  * - {@link InsufficientScope} → `insufficient_scope`
  * - {@link DPoPError} subclasses → `DPoP` scheme with `invalid_token`
+ *   (except {@link DPoPNotSupported}, see below)
  * - All other {@link AuthplaneError} → `Bearer` scheme with `invalid_token`
+ *
+ * `DPoPNotSupported` is the carve-out: although it extends `DPoPError`,
+ * the request was *not* DPoP-bound — the client presented a DPoP signal
+ * against a resource that does not accept DPoP, so the retry challenge
+ * must be `Bearer`, not `DPoP`. The subclass branch order below is
+ * load-bearing.
+ *
+ * Optional `options.resourceMetadataUrl` appends RFC 9728 §5.1
+ * `resource_metadata="…"`. Optional `options.scope` appends RFC 6750
+ * `scope="…"` when non-empty; commonly paired with `insufficient_scope`
+ * but also valid alongside `invalid_token`.
  */
 export function wwwAuthenticate(
 	error: AuthplaneError,
-	options: { realm?: string } = {},
+	options: {
+		realm?: string;
+		resourceMetadataUrl?: string;
+		scope?: readonly string[];
+	} = {},
 ): string {
 	const errorCode =
 		error instanceof InsufficientScope ? "insufficient_scope" : "invalid_token";
-	const scheme = error instanceof DPoPError ? "DPoP" : "Bearer";
+	const scheme =
+		error instanceof DPoPNotSupported
+			? "Bearer"
+			: error instanceof DPoPError
+				? "DPoP"
+				: "Bearer";
 	const parts: string[] = [];
 	if (options.realm) {
-		parts.push(`realm="${options.realm}"`);
+		parts.push(`realm="${sanitiseHeaderValue(options.realm)}"`);
 	}
 	parts.push(`error="${errorCode}"`);
-	parts.push(`error_description="${error.message}"`);
+	parts.push(`error_description="${sanitiseHeaderValue(error.message)}"`);
+	if (options.scope && options.scope.length > 0) {
+		parts.push(`scope="${sanitiseHeaderValue(options.scope.join(" "))}"`);
+	}
+	if (options.resourceMetadataUrl) {
+		parts.push(
+			`resource_metadata="${sanitiseHeaderValue(options.resourceMetadataUrl)}"`,
+		);
+	}
 	return `${scheme} ${parts.join(", ")}`;
 }
 

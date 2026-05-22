@@ -1,15 +1,18 @@
 import {
 	AuthplaneClient,
+	AuthplaneError,
 	type AuthplaneResource,
 	type AuthplaneResourceOptions,
 	type DPoPProvider,
 	type FetchSettings,
+	InsufficientScope,
+	InvalidClaims,
 	type ProtectedResourceMetadata,
+	TokenExpired,
+	TokenMissing,
+	httpStatus,
+	wwwAuthenticate,
 } from "@authplane/sdk/core";
-import {
-	InsufficientScopeError,
-	InvalidTokenError,
-} from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { RequestHandler } from "express";
 import { toUrlElicitationRequiredError } from "./urlElicitation.js";
@@ -44,7 +47,7 @@ export interface AuthplaneMcpAuthOptions
 	requiredScopes?: string[];
 	/**
 	 * Outbound fetch hardening applied to both AS metadata and JWKS fetches.
-	 * Defaults are derived from `devMode`. Java/Python parity.
+	 * Defaults are derived from `devMode`.
 	 */
 	fetchSettings?: FetchSettings;
 	jwksRefreshSeconds?: number;
@@ -52,31 +55,27 @@ export interface AuthplaneMcpAuthOptions
 	/**
 	 * Outbound DPoP provider for AS-facing calls (introspection, token
 	 * exchange, revocation). When set, requests to the AS are accompanied by
-	 * a DPoP proof and `cnf.jkt`-bound tokens are minted. Python parity with
-	 * `authplane_mcp_auth(dpop=...)`.
+	 * a DPoP proof and `cnf.jkt`-bound tokens are minted.
 	 */
 	dpopProvider?: DPoPProvider;
 	/**
 	 * Buffer subtracted from token TTLs before the outbound token cache
-	 * considers an entry expired (seconds). Default `30`. Python parity
-	 * with `cache_ttl_buffer_seconds`.
+	 * considers an entry expired (seconds). Default `30`.
 	 */
 	cacheTtlBufferSeconds?: number;
 	/**
 	 * Fallback outbound-token cache TTL used when the AS response does not
-	 * include expiry metadata (seconds). Default `3600`. Python parity with
-	 * `default_ttl_seconds`.
+	 * include expiry metadata (seconds). Default `3600`.
 	 */
 	defaultTtlSeconds?: number;
 	/**
 	 * Number of consecutive transient AS failures before the circuit breaker
-	 * opens. Default `5`. Python parity with `circuit_breaker_threshold`.
+	 * opens. Default `5`.
 	 */
 	circuitBreakerThreshold?: number;
 	/**
 	 * Cooldown before the open circuit breaker allows a half-open probe
-	 * request (seconds). Default `30`. Python parity with
-	 * `circuit_breaker_cooldown_seconds`.
+	 * request (seconds). Default `30`.
 	 */
 	circuitBreakerCooldownSeconds?: number;
 }
@@ -94,7 +93,7 @@ export interface AuthplaneMcpAuth {
 /**
  * Build the wiring needed to enable Authplane auth on an MCP server.
  *
- * Mirrors the Python `authplane_mcp_auth()` helper:
+ * Wires up the resource verifier, bearer middleware, and PRM handler:
  *
  * - Creates an `AuthplaneResource` configured with issuer, resource, and scopes
  * - Performs RFC 8414 metadata discovery and JWKS fetching
@@ -104,7 +103,7 @@ export interface AuthplaneMcpAuth {
  *   bearer-auth middleware (Authorization parsing, DPoP-header extraction,
  *   scope checks, `WWW-Authenticate`, 401/403/500) so it can thread
  *   per-request DPoP context into `verifier.verify()` — `requireBearerAuth`
- *   in the upstream SDK has no hook for that (see AP-244)
+ *   in the upstream SDK has no hook for that.
  * - Serves RFC 9728 Protected Resource Metadata (PRM) at the URL derived from `resource`
  *
  * The `scopes` list represents all scopes this MCP server supports. When
@@ -184,16 +183,16 @@ export async function authplaneMcpAuth(
 			// Express middleware: we parse Authorization, DPoP, and build an absolute URL for
 			// DPoP `htu` verification. The MCP SDK's OAuthTokenVerifier API takes a raw token
 			// string; there is no upstream hook that supplies a pre-parsed token while also
-			// threading per-request DPoP binding — so extraction stays here (AP-244).
+			// threading per-request DPoP binding — so extraction stays here.
 			const authHeader = req.headers.authorization;
 			if (!authHeader || Array.isArray(authHeader)) {
-				throw new InvalidTokenError("Missing Authorization header");
+				throw new TokenMissing("Missing Authorization header");
 			}
 
 			const [rawType, token] = authHeader.split(" ");
 			const type = rawType?.toLowerCase();
 			if (!token || type !== "bearer") {
-				throw new InvalidTokenError(
+				throw new TokenMissing(
 					"Invalid Authorization header format, expected 'Bearer TOKEN'",
 				);
 			}
@@ -208,9 +207,8 @@ export async function authplaneMcpAuth(
 
 			// Origin from configured `resource` (not request headers); only the
 			// path varies per-request. `Host` and `X-Forwarded-Proto` are
-			// intentionally ignored for `htu` reconstruction (AP-412).
-			const pathAndQuery =
-				req.originalUrl ?? req.url ?? resourceDefaultPath;
+			// intentionally ignored for `htu` reconstruction.
+			const pathAndQuery = req.originalUrl ?? req.url ?? resourceDefaultPath;
 			const url = `${resourceOrigin}${pathAndQuery}`;
 
 			const dpopRequest =
@@ -231,7 +229,7 @@ export async function authplaneMcpAuth(
 					authInfo.scopes.includes(scope),
 				);
 				if (!hasAllScopes) {
-					throw new InsufficientScopeError("Insufficient scope");
+					throw new InsufficientScope("Insufficient scope");
 				}
 			}
 
@@ -239,40 +237,34 @@ export async function authplaneMcpAuth(
 				typeof authInfo.expiresAt !== "number" ||
 				Number.isNaN(authInfo.expiresAt)
 			) {
-				throw new InvalidTokenError("Token has no expiration time");
+				throw new InvalidClaims("Token has no expiration time");
 			} else if (authInfo.expiresAt < Date.now() / 1000) {
-				throw new InvalidTokenError("Token has expired");
+				throw new TokenExpired("Token has expired");
 			}
 
 			(req as typeof req & { auth?: AuthInfo }).auth = authInfo;
 			next();
 		} catch (error) {
-			const requiredScopes = effectiveRequiredScopes;
-			const resourceMetadataUrl_ = resourceMetadataUrl;
-
-			const buildWwwAuthHeader = (errorCode: string, message: string) => {
-				let header = `Bearer error="${errorCode}", error_description="${message}"`;
-				if (requiredScopes.length > 0) {
-					header += `, scope="${requiredScopes.join(" ")}"`;
-				}
-				if (resourceMetadataUrl_) {
-					header += `, resource_metadata="${resourceMetadataUrl_}"`;
-				}
-				return header;
-			};
-
-			if (error instanceof InvalidTokenError) {
+			// Funnel every AuthplaneError through the SDK's helpers so the
+			// scheme (Bearer/DPoP), status (401/403), and sanitisation are
+			// expressed once across `@authplane/mcp` and
+			// `@authplane/fastmcp`, exercised by the conformance suite.
+			if (error instanceof AuthplaneError) {
 				res.set(
 					"WWW-Authenticate",
-					buildWwwAuthHeader(error.errorCode, error.message),
+					wwwAuthenticate(error, {
+						resourceMetadataUrl,
+						scope: effectiveRequiredScopes,
+					}),
 				);
-				res.status(401).json(error.toResponseObject());
-			} else if (error instanceof InsufficientScopeError) {
-				res.set(
-					"WWW-Authenticate",
-					buildWwwAuthHeader(error.errorCode, error.message),
-				);
-				res.status(403).json(error.toResponseObject());
+				const errorCode =
+					error instanceof InsufficientScope
+						? "insufficient_scope"
+						: "invalid_token";
+				res.status(httpStatus(error)).json({
+					error: errorCode,
+					error_description: error.message,
+				});
 			} else {
 				// Fallback to a generic 500.
 				res.status(500).json({

@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { FetchSettings, InvalidClientError, introspectToken } from "../../src/core/index.js";
 
 describe("introspectToken (RFC 7662)", () => {
-  it("parses a rich introspection response (Python-aligned fields)", async () => {
+  it("parses a rich introspection response", async () => {
     const server = createServer((req, res) => {
       if (req.url === "/oauth/introspect" && req.method === "POST") {
         res.setHeader("content-type", "application/json");

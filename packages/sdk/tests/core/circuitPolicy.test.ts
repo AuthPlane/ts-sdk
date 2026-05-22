@@ -13,7 +13,7 @@ import {
 import { SSRFError } from "../../src/core/fetching/ssrf.js";
 
 describe("shouldTripCircuit", () => {
-	it("does not trip on SSRF (Python _handle_failure parity)", () => {
+	it("does not trip on SSRF", () => {
 		expect(shouldTripCircuit(new SSRFError("blocked"))).toBe(false);
 	});
 

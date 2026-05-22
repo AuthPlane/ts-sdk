@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { AuthplaneError, VerifiedClaims, type AuthplaneResource } from "@authplane/sdk/core";
-import { InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
+import {
+  InvalidClaims,
+  InvalidSignature,
+  VerifiedClaims,
+  type AuthplaneResource,
+} from "@authplane/sdk/core";
 
 import { AuthplaneTokenVerifier } from "../src/verifier.js";
 
@@ -41,20 +45,20 @@ describe("AuthplaneTokenVerifier", () => {
     });
   });
 
-  it("converts AuthplaneError into InvalidTokenError", async () => {
+  it("propagates AuthplaneError unchanged (the calling adapter classifies it via httpStatus + wwwAuthenticate)", async () => {
     const verifier = {
       verify: vi.fn(async () => {
-        throw new AuthplaneError("Invalid token");
+        throw new InvalidSignature("signature verification failed");
       }),
     } as unknown as AuthplaneResource;
     const adapter = new AuthplaneTokenVerifier(verifier);
 
     await expect(adapter.verifyAccessToken("bad_token")).rejects.toBeInstanceOf(
-      InvalidTokenError
+      InvalidSignature,
     );
   });
 
-  it("throws InvalidTokenError when audience array is empty", async () => {
+  it("throws InvalidClaims when audience array is empty", async () => {
     const claims = new VerifiedClaims({
       sub: "user_123",
       clientId: "client_456",
@@ -76,7 +80,7 @@ describe("AuthplaneTokenVerifier", () => {
     const adapter = new AuthplaneTokenVerifier(verifier);
 
     await expect(adapter.verifyAccessToken("token")).rejects.toBeInstanceOf(
-      InvalidTokenError,
+      InvalidClaims,
     );
   });
 

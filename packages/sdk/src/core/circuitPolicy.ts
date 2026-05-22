@@ -18,8 +18,7 @@ const OAUTH_ERRORS_NO_CIRCUIT = new Set([
 
 /**
  * Whether an exception from token/revoke/exchange should count as a circuit
- * failure (Python `AuthplaneClient._handle_failure` semantics, extended for
- * OAuth 4xx vs misconfiguration).
+ * failure (distinguishing OAuth 4xx from misconfiguration).
  */
 export function shouldTripCircuit(error: unknown): boolean {
 	if (error instanceof SSRFError) {

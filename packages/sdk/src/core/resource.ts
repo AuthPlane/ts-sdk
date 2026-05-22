@@ -114,7 +114,7 @@ export interface AuthplaneResourceOptions {
 	 * rejects the token with {@link TokenRevoked}.
 	 *
 	 * When `false` (default), revocation-checker errors are logged and the
-	 * token is accepted. Availability over security; match Python SDK default.
+	 * token is accepted. Availability over security.
 	 */
 	failClosed?: boolean;
 }

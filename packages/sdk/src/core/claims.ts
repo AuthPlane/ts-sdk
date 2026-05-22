@@ -36,7 +36,7 @@ export interface VerifiedClaimsInput {
  * Returned by `AuthplaneResource.verify()` after successful token validation.
  * All fields have been cryptographically verified and structurally validated.
  *
- * Fields mirror the Python SDK's `VerifiedClaims` dataclass:
+ * Fields:
  *
  * - `sub`: subject identifier (user ID)
  * - `clientId`: OAuth 2.1 client identifier

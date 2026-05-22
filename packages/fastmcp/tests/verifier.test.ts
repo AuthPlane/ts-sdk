@@ -42,7 +42,7 @@ describe("AuthplaneTokenVerifier", () => {
     });
   });
 
-  it("returns undefined for authplane verification errors", async () => {
+  it("propagates AuthplaneError so the adapter can map it to a typed WWW-Authenticate challenge", async () => {
     const verifier = {
       verify: vi.fn(async () => {
         throw new AuthplaneError("Invalid token");
@@ -50,7 +50,9 @@ describe("AuthplaneTokenVerifier", () => {
     } as unknown as AuthplaneResource;
     const adapter = new AuthplaneTokenVerifier(verifier);
 
-    await expect(adapter.verifyAccessToken("bad_token")).resolves.toBeUndefined();
+    await expect(adapter.verifyAccessToken("bad_token")).rejects.toBeInstanceOf(
+      AuthplaneError,
+    );
   });
 
   it("rethrows non-authplane errors", async () => {

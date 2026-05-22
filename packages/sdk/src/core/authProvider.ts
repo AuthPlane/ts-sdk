@@ -6,8 +6,6 @@ import type { ASCredentials } from "./credentials.js";
  * request — typically `Authorization`, but any headers required by the auth
  * scheme (mTLS-aware gateways, `private_key_jwt` client assertions, etc.) are
  * allowed.
- *
- * Parity with Python's `authplane.auth_provider.AuthProvider`.
  */
 export interface AuthProvider {
 	authHeaders(): Record<string, string>;

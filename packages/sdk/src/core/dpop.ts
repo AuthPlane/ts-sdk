@@ -59,8 +59,7 @@ export interface VerifiedDPoPProof {
  * `checkAndStore` returns `true` when the `jti` was newly stored (first sight)
  * and `false` when it was already present. Implementations MUST make the
  * check-and-store pair atomic so concurrent `verifyDpopProof` calls cannot
- * both pass with the same `jti` under a TOCTOU race. Parity with Python's
- * `DPoPReplayStore.check_and_store`.
+ * both pass with the same `jti` under a TOCTOU race.
  */
 export interface DPoPReplayStore {
 	checkAndStore(jti: string, expiresAtSeconds: number): Promise<boolean>;

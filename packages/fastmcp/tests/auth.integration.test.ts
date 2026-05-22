@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FastMCP, type FastMCPSessionAuth } from "fastmcp";
 import {
   AuthplaneClient,
-  AuthplaneError,
+  InvalidSignature,
   VerifiedClaims,
   type AuthplaneResource,
 } from "@authplane/sdk/core";
@@ -77,7 +77,10 @@ describe("authplaneFastMcpAuth integration", () => {
         if (token === "valid_jwt") {
           return claims;
         }
-        throw new AuthplaneError("invalid token");
+        // SDK `verify()` always throws a specific subclass; the base
+        // `AuthplaneError` is abstract in practice. `InvalidSignature`
+        // is the realistic class for a malformed-or-tampered token.
+        throw new InvalidSignature("invalid token signature");
       }),
       prmResponse: vi.fn(() => ({
         resource,

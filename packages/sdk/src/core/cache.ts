@@ -6,8 +6,7 @@ export interface TokenCacheEntry<T> {
 /**
  * Small in-memory cache used to avoid repeated AS calls for short-lived tokens.
  *
- * Mirrors the Python SDK TokenCache behavior conceptually:
- * cache entries expire slightly before their server TTL (buffer) to reduce edge races.
+ * Cache entries expire slightly before their server TTL (buffer) to reduce edge races.
  */
 export class TokenCache<T> {
 	private readonly ttlBufferSeconds: number;

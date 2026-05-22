@@ -16,12 +16,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Check out shared conformance catalog
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: AuthPlane/conformance
-          path: conformance
-          fetch-depth: 1
+      # Uses the runner's built-in git instead of actions/checkout: equivalent
+      # trust for a public repo (AuthPlane/conformance), no third-party action
+      # surface to SHA-pin. Keeps the catalog outside the workspace so
+      # release.yml's `git add -A` cannot stage it as an embedded gitlink.
+      - name: Check out shared conformance catalog (outside workspace)
+        run: |
+          git -c advice.detachedHead=false clone --depth=1 \
+            https://github.com/AuthPlane/conformance.git \
+            "${{ runner.temp }}/conformance"
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -39,7 +42,7 @@ jobs:
 
       - name: Run coverage
         env:
-          CONFORMANCE_CATALOG_PATH: ${{ github.workspace }}/conformance/oauth-sdk-conformance-catalog.yaml
+          CONFORMANCE_CATALOG_PATH: ${{ runner.temp }}/conformance/oauth-sdk-conformance-catalog.yaml
         run: npm run test:coverage
 
       - name: Build packages

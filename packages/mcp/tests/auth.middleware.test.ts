@@ -282,7 +282,7 @@ describe("authplaneMcpAuth bearerAuth middleware", () => {
     );
   });
 
-  it("AP-412: ignores spoofed Host and X-Forwarded-Proto headers, uses configured resource origin", async () => {
+  it("ignores spoofed Host and X-Forwarded-Proto headers, uses configured resource origin", async () => {
     const auth = await buildAuth();
     const verifySpy = vi
       .spyOn(AuthplaneTokenVerifier.prototype, "verifyAccessTokenWithDpop")
@@ -315,7 +315,7 @@ describe("authplaneMcpAuth bearerAuth middleware", () => {
     );
   });
 
-  it("AP-412: still verifies when Host header is absent — origin comes from resource", async () => {
+  it("still verifies when Host header is absent — origin comes from resource", async () => {
     const auth = await buildAuth();
     const verifySpy = vi
       .spyOn(AuthplaneTokenVerifier.prototype, "verifyAccessTokenWithDpop")
@@ -330,7 +330,7 @@ describe("authplaneMcpAuth bearerAuth middleware", () => {
       headers: {
         authorization: "Bearer token-1",
         dpop: "proof",
-        // no host, no x-forwarded-proto, no req.protocol — pre-AP-412 this
+        // no host, no x-forwarded-proto, no req.protocol — before the htu-origin fix this
         // collapsed to `http://localhost/mcp`.
       },
       method: "POST",
@@ -347,7 +347,7 @@ describe("authplaneMcpAuth bearerAuth middleware", () => {
     );
   });
 
-  it("AP-412: never produces the 'localhost' literal even when Host header is an array", async () => {
+  it("never produces the 'localhost' literal even when Host header is an array", async () => {
     const auth = await buildAuth();
     const verifySpy = vi
       .spyOn(AuthplaneTokenVerifier.prototype, "verifyAccessTokenWithDpop")
@@ -379,7 +379,7 @@ describe("authplaneMcpAuth bearerAuth middleware", () => {
     expect(passedUrl).not.toContain("localhost");
   });
 
-  it("AP-412: falls back to the resource pathname when both originalUrl and url are absent", async () => {
+  it("falls back to the resource pathname when both originalUrl and url are absent", async () => {
     const auth = await buildAuth();
     const verifySpy = vi
       .spyOn(AuthplaneTokenVerifier.prototype, "verifyAccessTokenWithDpop")
@@ -408,7 +408,7 @@ describe("authplaneMcpAuth bearerAuth middleware", () => {
     );
   });
 
-  it("AP-412: dispatched path drives the htu — a proof minted for /endpoint-a hits the SDK with /endpoint-b on a cross-endpoint replay", async () => {
+  it("dispatched path drives the htu — a proof minted for /endpoint-a hits the SDK with /endpoint-b on a cross-endpoint replay", async () => {
     const auth = await buildAuth();
     const verifySpy = vi
       .spyOn(AuthplaneTokenVerifier.prototype, "verifyAccessTokenWithDpop")
@@ -440,7 +440,7 @@ describe("authplaneMcpAuth bearerAuth middleware", () => {
     );
   });
 
-  it("AP-412: default-port normalization — explicit :443 in resource is elided in the comparison URL", async () => {
+  it("default-port normalization — explicit :443 in resource is elided in the comparison URL", async () => {
     // Configuring `resource` with the explicit default HTTPS port must not
     // leak ":443" into the comparison URL, otherwise the adapter would
     // require its own port-normalizer in addition to the SDK's

@@ -99,7 +99,7 @@ The adapter produces:
 |---|---|---|
 | `client` | `AuthplaneClient` | The underlying client constructed by the adapter. Call `client.close()` on shutdown. |
 | `verifier` | `AuthplaneResource` | Low-level primitive. Call `verifier.verify(token)` if you need to bypass the FastMCP authenticate callback. |
-| `tokenVerifier` | `AuthplaneTokenVerifier` | Adapter wrapper around `AuthplaneResource.verify()` that returns `AuthplaneFastMcpSession \| undefined`. |
+| `tokenVerifier` | `AuthplaneTokenVerifier` | Adapter wrapper around `AuthplaneResource.verify()` that returns `AuthplaneFastMcpSession` on success or rethrows the underlying `AuthplaneError` subclass on failure (so callers wiring this manually can map errors to the right `WWW-Authenticate` challenge themselves). |
 | `authenticate` | FastMCP `authenticate` callback | Plug into `new FastMCP({ authenticate: auth.authenticate, ... })`. Parses the bearer (or `DPoP ...`) header, verifies the token, and returns the session. |
 | `oauth` | FastMCP `oauth` config | Plug into `new FastMCP({ oauth: auth.oauth, ... })`. Publishes the PRM. |
 | `protectedResourceMetadata` | `ProtectedResourceMetadata` | The RFC 9728 JSON payload. |
@@ -182,11 +182,11 @@ const auth = await authplaneFastMcpAuth({
   resource: "https://mcp.example.com/mcp",
   scopes: ["tools/read"],
   asCredentials: { clientId: "rs-client", clientSecret: "<secret>" },
-  revocationChecker: IntrospectionRevocation,
+  revocationChecker: IntrospectionRevocation.get(),
 });
 ```
 
-`IntrospectionRevocation` makes the adapter call `authserver`'s RFC 7662 introspection endpoint on every token verification; tokens with `active: false` are rejected. Adds one round-trip per authenticated request. Custom `RevocationChecker` callbacks are supported for DB-backed allowlists.
+`IntrospectionRevocation.get()` returns the marker singleton; the adapter then calls `authserver`'s RFC 7662 introspection endpoint on every token verification, and tokens with `active: false` are rejected. Adds one round-trip per authenticated request. Custom `RevocationChecker` callbacks are supported for DB-backed allowlists.
 
 ## DPoP-bound tokens
 
@@ -194,7 +194,7 @@ The adapter parses both `Authorization: Bearer <token>` and `Authorization: DPoP
 
 ### Three-mode DPoP enforcement
 
-Whether DPoP is accepted, required, or rejected is decided per-resource by the presence and shape of `inboundDPoP` (mirrors `python-sdk`):
+Whether DPoP is accepted, required, or rejected is decided per-resource by the presence and shape of `inboundDPoP`:
 
 | Mode | `inboundDPoP` | Bearer-only token | DPoP-bound token (with proof) | DPoP signal on a non-bound token |
 |---|---|---|---|---|
@@ -225,6 +225,8 @@ const auth = await authplaneFastMcpAuth({
   inboundDPoP: { required: true },
 });
 ```
+
+> **Note — any `inboundDPoP` configuration (Required *or* Supported) relies on a workaround for FastMCP's `authenticate` invocation pattern.** FastMCP `3.35.x` invokes `authenticate` twice per HTTP request (forwarded to `mcp-proxy` as the request gate, then re-invoked inside the `createServer` factory to build the session payload), but RFC 9449 inbound replay verification can only run once per proof. Every accepted DPoP-bound request — Mode 1's mandatory case and Mode 2's optional case alike — goes through the replay store, so without accommodation the second invocation re-enters `AuthplaneResource.verify()` with the same proof and the inbound replay store rejects it as `DPoPReplayDetected`, surfacing as a generic 401. The adapter scopes a per-request `verifyAccessToken` promise via Node's [`AsyncLocalStorage`](https://nodejs.org/api/async_context.html#class-asynclocalstorage), so both invocations within the same HTTP request share a single `verify()` call. The boundary is Node's per-request async context (one fresh context per `'request'` event), not `IncomingMessage` identity — so wrapping, proxying, or replacing the request object between invocations does not break the cache, and cross-request leakage is structurally impossible. The same dual-invoke structure has been verified in `fastmcp@4.0.1`, so the workaround is expected to continue working across upgrades within that range. If a future FastMCP version routes the second invocation through a callsite that loses async-context propagation and you observe `DPoPReplayDetected` on previously-working flows, [file an issue](https://github.com/AuthPlane/ts-sdk/issues). Mode 3 (no `inboundDPoP` configured) is unaffected — no replay store is invoked.
 
 ### `InboundDPoPOptions`
 
@@ -341,16 +343,11 @@ if (mapped) throw mapped;
 
 ## Error handling
 
-The adapter surfaces Authplane errors as standard HTTP responses via FastMCP:
+The adapter funnels every `AuthplaneError` thrown by the underlying verifier (and by its own scope / Authorization-header checks) through `httpStatus(error)` + `wwwAuthenticate(error, { resourceMetadataUrl, scope })` from `@authplane/sdk/core`, so the wire-level mapping — Bearer vs DPoP scheme, 401 vs 403, the `DPoPNotSupported → Bearer` carve-out, header-value sanitisation — is defined once in the SDK and shared across adapters.
 
-| Authplane error | HTTP | `WWW-Authenticate` |
-|---|---|---|
-| `TokenMissing` | 401 | `Bearer realm="..."` |
-| `TokenExpired`, `InvalidSignature`, `InvalidClaims`, `TokenRevoked` | 401 | `Bearer error="invalid_token"` |
-| `InsufficientScope` (from `requiredScopes`) | 403 | `Bearer error="insufficient_scope"` |
-| `DPoPProofMissing`, `InvalidDPoPProof`, `DPoPReplayDetected`, `DPoPBindingMismatch`, `DPoPNotSupported` | 401 | `Bearer error="invalid_token"` |
+See [**`@authplane/sdk` user guide — HTTP status and WWW-Authenticate challenge**](../../sdk/docs/user-guide.md#http-status-and-www-authenticate-challenge) for the canonical table.
 
-When the `authenticate` callback returns `undefined` (invalid token), FastMCP rejects the session with 401 and includes the PRM URL in the challenge so clients can discover the AS.
+`resource_metadata="…"` is always included on adapter responses so clients can discover the AS; `scope="…"` is included when `requiredScopes` (or `inboundDPoP.requiredScopes`) is configured. Non-Authplane errors fall through to FastMCP's default 500 handling.
 
 ## Cleanup
 

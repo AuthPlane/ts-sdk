@@ -1,6 +1,6 @@
 # Conformance Test Suite (TypeScript)
 
-This directory mirrors the Python conformance suite in structure:
+This directory is structured as follows:
 
 - Tests are mapped to the shared OAuth SDK Conformance Catalog via a case ID.
 - A meta-test enforces that **every** catalog case ID is represented by at least one conformance test in this package.
@@ -31,7 +31,7 @@ If any catalog case is missing, the alignment test fails.
 
 ## Coverage Metadata and Reporting
 
-`conformanceCase()` accepts optional coverage metadata as a fourth argument, matching the Python suite's `level`/`gaps`/`note` shape:
+`conformanceCase()` accepts optional coverage metadata as a fourth argument, with a `level`/`gaps`/`note` shape:
 
 ```ts
 conformanceCase(
@@ -49,7 +49,7 @@ Each case records its pass/fail outcome plus coverage metadata to `.conformance-
 
 The `AUTHPLANE_CONFORMANCE_RUN_ID` env var (set automatically by the `test` and `test:coverage` scripts) scopes aggregation to the current run so stale JSONL entries from a prior run aren't mixed in.
 
-Not yet supported, relative to the Python suite: `xfail`-style markers for intentionally-failing not-yet-implemented cases. Use `{ level: "partial", gaps: [...] }` coverage annotations on passing cases for now, or omit the case until implemented.
+Not yet supported: `xfail`-style markers for intentionally-failing not-yet-implemented cases. Use `{ level: "partial", gaps: [...] }` coverage annotations on passing cases for now, or omit the case until implemented.
 
 ## Running
 

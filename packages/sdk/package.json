@@ -21,7 +21,7 @@
 		"url": "https://github.com/AuthPlane/ts-sdk/issues"
 	},
 	"engines": {
-		"node": ">=22"
+		"node": ">=20.0.0"
 	},
 	"type": "module",
 	"exports": {
@@ -38,6 +38,7 @@
 	},
 	"files": [
 		"dist",
+		"docs",
 		"CHANGELOG.md",
 		"LICENSE",
 		"README.md"

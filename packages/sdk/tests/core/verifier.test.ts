@@ -617,7 +617,7 @@ describe("AuthplaneResource with introspection", () => {
     }
   });
 
-  it("accepts token with IntrospectionRevocation + asCredentials (aligned with Python SDK)", async () => {
+  it("accepts token with IntrospectionRevocation + asCredentials", async () => {
     const activeServer = await startAuthServer({ introspectionActive: true });
     try {
       const asCredentials: ASCredentials = {

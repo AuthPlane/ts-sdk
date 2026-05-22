@@ -43,8 +43,6 @@ import {
 	staticMetadataFetcher,
 } from "./helpers.js";
 
-// Python parity: mirrors `conformance-tests/test_jwt_and_dpop_conformance.py`.
-
 const NO_SSRF = new FetchSettings({
 	ssrfProtection: false,
 	allowHttp: true,
@@ -1231,9 +1229,9 @@ conformanceCase(
 		const { fixture, boundToken } = await dpopBoundFixture();
 		try {
 			const token = await boundToken();
-			// Pass a request context without a proof — Python parity: the
-			// resource has the binding (cnf.jkt) but no proof to validate it,
-			// so the verifier MUST raise DPoPProofMissing.
+			// Pass a request context without a proof — the resource has the
+			// binding (cnf.jkt) but no proof to validate it, so the verifier
+			// MUST raise DPoPProofMissing.
 			await expect(
 				fixture.resource.verify(token, {
 					dpopRequest: {

@@ -1,12 +1,18 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { IncomingMessage } from "node:http";
 import {
 	AuthplaneClient,
+	AuthplaneError,
 	type AuthplaneResource,
 	type AuthplaneResourceOptions,
 	type DPoPProvider,
 	type DPoPRequestContext,
 	type FetchSettings,
+	InsufficientScope,
 	type ProtectedResourceMetadata,
+	TokenMissing,
+	httpStatus,
+	wwwAuthenticate,
 } from "@authplane/sdk/core";
 import type { ServerOptions } from "fastmcp";
 import { toUrlElicitationRequiredError } from "./urlElicitation.js";
@@ -14,6 +20,27 @@ import {
 	type AuthplaneFastMcpSession,
 	AuthplaneTokenVerifier,
 } from "./verifier.js";
+
+/**
+ * Async-local context that scopes the per-request `verifyAccessToken` cache.
+ *
+ * Production code never touches this directly. Node's `http.Server` creates
+ * a fresh async context per HTTP request, so the first `authenticate` call
+ * inside that context uses `enterWith` to plant a fresh store, and any
+ * subsequent `authenticate` calls within the same request (FastMCP invokes
+ * the callback twice as of 3.35.x) see the same store via async-chain
+ * propagation. Different requests get distinct async contexts and therefore
+ * distinct stores — no cross-request leakage is possible regardless of how
+ * FastMCP wraps, replaces, or proxies the `IncomingMessage`.
+ *
+ * @internal Exported only so tests can simulate the per-request boundary
+ * Node provides automatically. A vitest test body shares one async context
+ * across all of its calls, so tests must wrap each "simulated request" in
+ * `_authenticateRequestContext.run({}, async () => ...)` to mimic prod.
+ */
+export const _authenticateRequestContext = new AsyncLocalStorage<{
+	promise?: Promise<AuthplaneFastMcpSession>;
+}>();
 
 export interface AuthplaneFastMcpAuthOptions
 	extends Omit<AuthplaneResourceOptions, "scopes" | "resource"> {
@@ -25,7 +52,7 @@ export interface AuthplaneFastMcpAuthOptions
 	requiredScopes?: string[];
 	/**
 	 * Outbound fetch hardening applied to both AS metadata and JWKS fetches.
-	 * Defaults are derived from `devMode`. Java/Python parity.
+	 * Defaults are derived from `devMode`.
 	 */
 	fetchSettings?: FetchSettings;
 	jwksRefreshSeconds?: number;
@@ -33,31 +60,27 @@ export interface AuthplaneFastMcpAuthOptions
 	/**
 	 * Outbound DPoP provider for AS-facing calls (introspection, token
 	 * exchange, revocation). When set, requests to the AS are accompanied by
-	 * a DPoP proof and `cnf.jkt`-bound tokens are minted. Python parity with
-	 * `authplane_auth(dpop=...)`.
+	 * a DPoP proof and `cnf.jkt`-bound tokens are minted.
 	 */
 	dpopProvider?: DPoPProvider;
 	/**
 	 * Buffer subtracted from token TTLs before the outbound token cache
-	 * considers an entry expired (seconds). Default `30`. Python parity
-	 * with `cache_ttl_buffer_seconds`.
+	 * considers an entry expired (seconds). Default `30`.
 	 */
 	cacheTtlBufferSeconds?: number;
 	/**
 	 * Fallback outbound-token cache TTL used when the AS response does not
-	 * include expiry metadata (seconds). Default `3600`. Python parity with
-	 * `default_ttl_seconds`.
+	 * include expiry metadata (seconds). Default `3600`.
 	 */
 	defaultTtlSeconds?: number;
 	/**
 	 * Number of consecutive transient AS failures before the circuit breaker
-	 * opens. Default `5`. Python parity with `circuit_breaker_threshold`.
+	 * opens. Default `5`.
 	 */
 	circuitBreakerThreshold?: number;
 	/**
 	 * Cooldown before the open circuit breaker allows a half-open probe
-	 * request (seconds). Default `30`. Python parity with
-	 * `circuit_breaker_cooldown_seconds`.
+	 * request (seconds). Default `30`.
 	 */
 	circuitBreakerCooldownSeconds?: number;
 }
@@ -128,7 +151,7 @@ function buildDpopRequestContext(
 	// `X-Forwarded-Proto` would let an intermediary (or, when the app is
 	// reachable directly, the requester) decide which `htu` the proof is
 	// checked against, neutering DPoP's cross-endpoint anti-replay
-	// (AP-412). Only the path varies per-request.
+	// Only the path varies per-request.
 	const pathAndQuery = request.url ?? resourceDefaultPath;
 	const url = `${resourceOrigin}${pathAndQuery}`;
 
@@ -137,31 +160,6 @@ function buildDpopRequestContext(
 		url,
 		proof,
 	};
-}
-
-function unauthorizedResponse(
-	description: string,
-	resourceMetadataUrl: string,
-): Response {
-	return new Response(null, {
-		status: 401,
-		headers: {
-			"WWW-Authenticate": `Bearer error="invalid_token", error_description="${description}", resource_metadata="${resourceMetadataUrl}"`,
-		},
-	});
-}
-
-function forbiddenInsufficientScopeResponse(
-	requiredScopes: string[],
-	resourceMetadataUrl: string,
-): Response {
-	const scopeValue = requiredScopes.join(" ");
-	return new Response(null, {
-		status: 403,
-		headers: {
-			"WWW-Authenticate": `Bearer error="insufficient_scope", error_description="Insufficient scope", scope="${scopeValue}", resource_metadata="${resourceMetadataUrl}"`,
-		},
-	});
 }
 
 export async function authplaneFastMcpAuth(
@@ -233,28 +231,73 @@ export async function authplaneFastMcpAuth(
 
 	const defaultRequiredScopes = options.requiredScopes ?? [];
 
+	// Per-request verification cache via Node's `AsyncLocalStorage`. FastMCP
+	// can — and as of 3.35.x does — invoke `authenticate` more than once per
+	// HTTP request. Without this cache the second invocation re-enters
+	// `AuthplaneResource.verify()` with the same DPoP proof, which the inbound
+	// replay store then rejects as `DPoPReplayDetected`, breaking
+	// `inboundDPoP: { required: true }`. The async-local store carries the
+	// in-flight `verifyAccessToken` promise across the request's async chain
+	// so both invocations collapse onto a single verify(). The boundary is
+	// Node's per-request async context (one per HTTP request, fresh on each
+	// 'request' event) — no shared keying on `IncomingMessage` identity, so
+	// FastMCP wrapping/replacing the request object between invocations does
+	// not break the cache. The store dies with the request's async context,
+	// so cross-request replay protection is preserved.
+	// Build a `Response` for an AuthplaneError using the shared
+	// `httpStatus` + `wwwAuthenticate` helpers from `@authplane/sdk/core`.
+	// Both adapters (`@authplane/mcp` and `@authplane/fastmcp`) funnel
+	// every error path through this so the wire-level contract is
+	// expressed once, in the SDK, and pinned by the conformance suite.
+	const challengeResponse = (error: AuthplaneError): Response =>
+		new Response(null, {
+			status: httpStatus(error),
+			headers: {
+				"WWW-Authenticate": wwwAuthenticate(error, {
+					resourceMetadataUrl: protectedResourceMetadataUrl,
+					scope: defaultRequiredScopes,
+				}),
+			},
+		});
+
 	const authenticate: NonNullable<
 		ServerOptions<AuthplaneFastMcpSession>["authenticate"]
 	> = async (request) => {
 		const token = getBearerToken(request);
 		if (!token) {
-			throw unauthorizedResponse(
-				"Missing or invalid Authorization header",
-				protectedResourceMetadataUrl,
+			throw challengeResponse(
+				new TokenMissing("Missing or invalid Authorization header"),
 			);
 		}
 
-		const dpopContext = buildDpopRequestContext(
-			request,
-			resourceOrigin,
-			resourceDefaultPath,
-		);
-		const session = await tokenVerifier.verifyAccessToken(token, dpopContext);
-		if (!session) {
-			throw unauthorizedResponse(
-				"Invalid access token",
-				protectedResourceMetadataUrl,
+		let store = _authenticateRequestContext.getStore();
+		if (store === undefined) {
+			store = {};
+			_authenticateRequestContext.enterWith(store);
+		}
+		if (store.promise === undefined) {
+			const dpopContext = buildDpopRequestContext(
+				request,
+				resourceOrigin,
+				resourceDefaultPath,
 			);
+			store.promise = tokenVerifier.verifyAccessToken(token, dpopContext);
+		}
+		let session: AuthplaneFastMcpSession;
+		try {
+			session = await store.promise;
+		} catch (err) {
+			if (err instanceof AuthplaneError) {
+				// Surface the underlying class so DPoP failures get the DPoP
+				// challenge scheme and scope failures get 403, instead of
+				// every authentication error collapsing to a generic
+				// "Invalid access token" 401. The cached rejection from the
+				// ALS-scoped promise re-throws on every replay within the
+				// same request (FastMCP double-`authenticate`), so both
+				// invocations surface the same typed error.
+				throw challengeResponse(err);
+			}
+			throw err;
 		}
 
 		if (defaultRequiredScopes.length > 0) {
@@ -262,10 +305,7 @@ export async function authplaneFastMcpAuth(
 				session.scopes.includes(scope),
 			);
 			if (!hasAll) {
-				throw forbiddenInsufficientScopeResponse(
-					defaultRequiredScopes,
-					protectedResourceMetadataUrl,
-				);
+				throw challengeResponse(new InsufficientScope("Insufficient scope"));
 			}
 		}
 
