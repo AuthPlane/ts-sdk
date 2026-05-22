@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-22
+
 - `@authplane/fastmcp`: support `fastmcp` 4.x in addition to 3.35+. Consumers using `OAuthProxy` directly must set `allowedRedirectUriPatterns` themselves — fastmcp 4.0 removed the default value (CWE-601 fix).
 - `@authplane/sdk`: `wwwAuthenticate(error, options)` gains `resourceMetadataUrl` (RFC 9728 §5.1) and `scope` (RFC 6750) options, sanitises interpolated values against header injection (RFC 9110 §11.4), and emits the `Bearer` scheme for `DPoPNotSupported`.
 - `@authplane/fastmcp` and `@authplane/mcp`: authentication failures now emit a per-error `WWW-Authenticate` challenge via `httpStatus` + `wwwAuthenticate` from `@authplane/sdk/core`. DPoP failures use the `DPoP` scheme (RFC 9449 §7.1); `resource_metadata` is always included and `scope` when `requiredScopes` is configured.
