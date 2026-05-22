@@ -29,7 +29,7 @@ import {
 } from "./resource.js";
 
 /**
- * Unified OAuth client for Authplane authorization servers (Python parity).
+ * Unified OAuth client for Authplane authorization servers.
  *
  * Owns AS connection state (metadata, JWKS), caches, and resilience
  * (circuit breaker + token cache). Creates protected resources via `resource()`.

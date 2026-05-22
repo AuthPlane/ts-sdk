@@ -11,7 +11,7 @@ import {
   clientCredentialsGrant,
 } from "../../src/core/index.js";
 
-describe("DPoP nonce retry (Python parity)", () => {
+describe("DPoP nonce retry", () => {
   it("retries once when AS returns use_dpop_nonce + dpop-nonce header", async () => {
     const { privateKey, publicKey } = await generateKeyPair("ES256");
     const publicJwk = await exportJWK(publicKey);

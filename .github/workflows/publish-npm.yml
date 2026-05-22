@@ -33,11 +33,17 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.ref }}
 
+      # No registry-url here: actions/setup-node would otherwise write a
+      # `_authToken=${NODE_AUTH_TOKEN}` line into ~/.npmrc, which under the
+      # Trusted Publisher flow (no NODE_AUTH_TOKEN exported) expands to an
+      # empty token. npm tolerates this today but the behaviour is implicit
+      # and version-dependent. Letting npm use its default registry keeps
+      # .npmrc untouched; the @authplane/* packages publish to npmjs.org
+      # via npm's defaults.
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
           cache: npm
 
       - name: Derive version from tag
@@ -103,19 +109,19 @@ jobs:
       # registry for the succeeded package(s). Recovery: download the
       # dist-v<version> artifact and run `npm publish --provenance
       # --access public` for the remaining tarball(s) at the same version.
+      # Authentication is via npm Trusted Publisher (OIDC). The job's
+      # `id-token: write` permission lets the npm CLI exchange the GHA
+      # OIDC token for a short-lived publish credential — no NPM_TOKEN
+      # secret involved. Each @authplane/* package must have a Trusted
+      # Publisher entry on npmjs.com pointing at this repo + this
+      # workflow filename + the `npm` environment.
       - name: Publish @authplane/sdk to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public -w @authplane/sdk
 
       - name: Publish @authplane/mcp to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public -w @authplane/mcp
 
       - name: Publish @authplane/fastmcp to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public -w @authplane/fastmcp
 
       - name: Summary

@@ -68,8 +68,6 @@ export function sha256Base64Url(value: string): string {
 
 /**
  * Signing key material for DPoP proof generation.
- *
- * Parity with Python's `authplane.dpop.DPoPKeyMaterial`.
  */
 export class DPoPKeyMaterial {
 	public readonly privateKey: KeyLike;
@@ -94,7 +92,6 @@ export class DPoPKeyMaterial {
 
 	/**
 	 * Import a PEM-encoded PKCS#8 private key and derive its public JWK.
-	 * Parity with Python's `DPoPKeyMaterial.from_pem`.
 	 */
 	public static async fromPem(
 		privateKeyPem: string,
@@ -119,7 +116,7 @@ export class DPoPKeyMaterial {
 
 /**
  * RFC 7638 SHA-256 thumbprint — sync implementation over the canonical JWK
- * members. Mirrors Python's `jwk_thumbprint`.
+ * members.
  */
 function jwkThumbprint(jwk: JWK): string {
 	const kty = String(jwk.kty ?? "");
@@ -198,7 +195,6 @@ export class InMemoryDPoPNonceStore implements DPoPNonceStore {
 
 // ---------------------------------------------------------------------------
 // DPoPProvider — the single client-side DPoP entry point (RFC 9449 §4).
-// Parity with Python's `DPoPProvider`.
 // ---------------------------------------------------------------------------
 
 export class DPoPProvider {

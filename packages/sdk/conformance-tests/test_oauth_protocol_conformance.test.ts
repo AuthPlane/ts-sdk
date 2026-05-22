@@ -33,8 +33,6 @@ import {
 	generateEs256Keypair,
 } from "./helpers.js";
 
-// Python parity: mirrors `conformance-tests/test_oauth_protocol_conformance.py`.
-
 const NO_SSRF = new FetchSettings({
 	ssrfProtection: false,
 	allowHttp: true,

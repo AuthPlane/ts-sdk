@@ -8,6 +8,8 @@
 npm install @authplane/sdk @authplane/mcp @modelcontextprotocol/sdk express zod
 ```
 
+Requires Node.js 20 LTS or newer.
+
 ## Quickstart
 
 ```ts
@@ -37,6 +39,38 @@ app.listen(3000);
 ```
 
 `auth.bearerAuth` is an Express middleware that validates the bearer token, enforces scopes, and attaches `req.auth` (MCP's `AuthInfo`).
+
+## Per-tool scope enforcement
+
+Two `requireScope` symbols exist; use the right one:
+
+- `requireScope(scope, extra.authInfo)` from `@authplane/mcp` — call inside an MCP tool handler. Throws if the bound bearer token does not carry `scope`.
+- `claims.requireScope(scope)` method on `VerifiedClaims` from `@authplane/sdk/core` — call when you are doing manual JWT validation outside the MCP request flow and you already hold a `VerifiedClaims`.
+
+In a normal MCP server you only need the first one; the bearer middleware already populated `extra.authInfo` for you.
+
+## Local development
+
+The default `FetchSettings` reject plaintext `http://` issuers (SSRF protection). When pointing the adapter at a local authserver — typically `http://localhost:9000` — pass `devMode: true` to relax the network policy:
+
+```ts
+const auth = await authplaneMcpAuth({
+  issuer: "http://localhost:9000",
+  resource: "http://localhost:8080/mcp",
+  scopes: ["tools/get_weather"],
+  devMode: true,
+});
+```
+
+> **Warning:** Never set `devMode: true` in production — it disables SSRF protection entirely.
+
+`devMode: true` is shorthand for `fetchSettings: new FetchSettings({ ssrfProtection: false, allowHttp: true, allowLocalhost: true, allowPrivateNetworks: true })`. If you need finer control (e.g. allow loopback but keep HTTPS-only), construct a `FetchSettings` directly and pass it as `fetchSettings`:
+
+```ts
+import { FetchSettings } from "@authplane/mcp";
+```
+
+Without one of these, metadata discovery against an `http://` issuer fails with `MetadataFetchError: URL must use HTTPS`.
 
 ## Learn more
 

@@ -13,7 +13,7 @@ Ships two subpath entry points:
 npm install @authplane/sdk
 ```
 
-Requires Node.js 22 LTS (or newer). TypeScript consumers need `"moduleResolution": "bundler" | "node16" | "nodenext"`.
+Requires Node.js 20 LTS or newer. TypeScript consumers need `"moduleResolution": "bundler" | "node16" | "nodenext"`.
 
 ## Validate an access token
 
@@ -41,9 +41,30 @@ const client = await AuthplaneClient.create({
   auth: { clientId: "my-client-id", clientSecret: "my-client-secret" },
 });
 
-const token = await client.clientCredentials(["tools/read"]);
+const token = await client.clientCredentials(["tools/read"], ["https://api.example.com"]);
 console.log(token.accessToken);
 ```
+
+## Local development
+
+The default `FetchSettings` reject plaintext `http://` issuers (SSRF protection). When pointing the SDK at a local authserver — typically `http://localhost:9000` — pass `devMode: true` to relax the network policy:
+
+```ts
+const client = await AuthplaneClient.create({
+  issuer: "http://localhost:9000",
+  devMode: true,
+});
+```
+
+> **Warning:** Never set `devMode: true` in production — it disables SSRF protection entirely.
+
+`devMode: true` is shorthand for `fetchSettings: new FetchSettings({ ssrfProtection: false, allowHttp: true, allowLocalhost: true, allowPrivateNetworks: true })`. If you need finer control (e.g. allow loopback but keep HTTPS-only), construct a `FetchSettings` directly and pass it as `fetchSettings`:
+
+```ts
+import { FetchSettings } from "@authplane/sdk/core";
+```
+
+Without one of these, metadata discovery against an `http://` issuer fails with `MetadataFetchError: URL must use HTTPS`.
 
 ## Learn more
 

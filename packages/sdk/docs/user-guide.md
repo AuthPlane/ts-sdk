@@ -23,6 +23,7 @@ Complete reference for the core Authplane TypeScript SDK. Starts with the simple
 - [Single client model (`AuthplaneClient`)](#single-client-model-authplaneclient)
 - [Fetch settings and SSRF protection](#fetch-settings-and-ssrf-protection)
 - [Error types](#error-types)
+- [HTTP status and WWW-Authenticate challenge](#http-status-and-www-authenticate-challenge)
 - [Caching, circuit breaker, and cleanup](#caching-circuit-breaker-and-cleanup)
 
 ## Install and import
@@ -149,17 +150,17 @@ import { AuthplaneClient, IntrospectionRevocation } from "@authplane/sdk/core";
 
 const client = await AuthplaneClient.create({
   issuer: "https://auth.example.com",
-  auth: { clientId: "rs-client", clientSecret: "<secret>" },
 });
 
 const resource = client.resource({
   resource: "https://api.example.com",
   scopes: ["read"],
-  revocationChecker: IntrospectionRevocation,
+  revocationChecker: IntrospectionRevocation.get(),
+  asCredentials: { clientId: "rs-client", clientSecret: "<secret>" },
 });
 ```
 
-`IntrospectionRevocation` is a marker that tells `AuthplaneResource.verify()` to call the AS's introspection endpoint on each token; if `active: false` comes back, `TokenRevoked` is thrown.
+`IntrospectionRevocation.get()` returns the marker singleton that tells `AuthplaneResource.verify()` to call the AS's introspection endpoint on each token; if `active: false` comes back, `TokenRevoked` is thrown. The introspection request is authenticated with `asCredentials` configured on the resource itself — `auth` on `AuthplaneClient.create()` only powers token-acquisition flows (`clientCredentials`, `exchange`).
 
 You can also pass a custom `RevocationChecker` function: `(claims, rawToken) => Promise<boolean>` — return `true` to reject.
 
@@ -171,14 +172,15 @@ By default, if the revocation checker itself throws (introspection endpoint unre
 const resource = client.resource({
   resource: "https://api.example.com",
   scopes: ["read"],
-  revocationChecker: IntrospectionRevocation,
+  revocationChecker: IntrospectionRevocation.get(),
+  asCredentials: { clientId: "rs-client", clientSecret: "<secret>" },
   failClosed: true, // reject on introspection transport errors
 });
 ```
 
 ## DPoP-bound tokens (RFC 9449)
 
-DPoP enforcement is **per-resource**, not per-request. To accept DPoP-bound tokens (or require them), opt the resource in by passing `inboundDPoP` to `client.resource(...)`. Three modes (mirrors `python-sdk`):
+DPoP enforcement is **per-resource**, not per-request. To accept DPoP-bound tokens (or require them), opt the resource in by passing `inboundDPoP` to `client.resource(...)`. Three modes:
 
 | Mode | `inboundDPoP` | Bearer-only token | DPoP-bound token (with proof) | DPoP signal on a non-bound token |
 |---|---|---|---|---|
@@ -208,7 +210,8 @@ const dpopRequest: DPoPRequestContext = {
 };
 
 const claims = await resource.verify(bearerToken, { dpopRequest });
-// claims.dpopProof is set and includes the verified public key thumbprint (jkt).
+// claims.dpopProof.jkt is the verified public-key thumbprint;
+// claims.dpopProof.jti and .iat are the proof's identifier and issued-at.
 ```
 
 When a `dpopRequest` is provided to a DPoP-supporting resource, the verifier checks:
@@ -310,11 +313,14 @@ const client = await AuthplaneClient.create({
   auth: { clientId: "my-client-id", clientSecret: "my-client-secret" },
 });
 
-const token = await client.clientCredentials(["tools/read", "tools/write"]);
+const token = await client.clientCredentials(
+  ["tools/read", "tools/write"],
+  ["https://api.example.com"],
+);
 // token.accessToken, token.expiresIn, token.scope, ...
 ```
 
-Pass requested scopes as the first argument and optional resource indicators as the second argument, for example `client.clientCredentials(["tools/read"], ["https://api.example.com"])`. Tokens are cached by the normalized scope/resource combination and reused until they fall within the configured TTL buffer (default 30 s before expiry).
+Scopes go in the first argument; resource indicators (RFC 8707) go in the second. **Always pass the resource indicators that match the resource server's `resource` URI** — otherwise the AS issues a token whose `aud` is the issuer URL, and `AuthplaneResource.verify()` will reject it with `InvalidClaims("unexpected aud claim value")`. Tokens are cached by the normalized scope/resource combination and reused until they fall within the configured TTL buffer (default 30 s before expiry).
 
 ### Token exchange (RFC 8693)
 
@@ -412,6 +418,62 @@ All SDK errors extend `AuthplaneError`. Catch at the appropriate level and map t
 - `CircuitOpenError` — circuit breaker is open (too many AS failures in a row).
 
 The full error hierarchy is documented in `packages/sdk/src/core/errors.ts` and `packages/sdk/src/auth/errors.ts`.
+
+## HTTP status and WWW-Authenticate challenge
+
+For resource-server flows, two helpers turn the typed errors above into spec-compliant HTTP responses. Use them together — `httpStatus(error)` for the status code, `wwwAuthenticate(error, options)` for the `WWW-Authenticate` header value. Both `@authplane/mcp` and `@authplane/fastmcp` are thin wrappers around these.
+
+### `httpStatus(error)`
+
+Maps any `AuthplaneError` (and a few non-Authplane errors) to an HTTP status code:
+
+| Error class | Status |
+|---|---|
+| `InsufficientScope` | 403 |
+| `JWKSFetchError`, `MetadataFetchError`, `MissingMetadataEndpoint` | 503 |
+| `TokenMissing`, `TokenExpired`, `InvalidSignature`, `InvalidClaims`, `TokenRevoked`, `InvalidGrant`, any `DPoPError` subclass | 401 |
+| `VerifierRuntimeError`, any other (`Error`, `undefined`, …) | 500 |
+
+### `wwwAuthenticate(error, options)`
+
+Builds an RFC 6750 §3 `WWW-Authenticate` header value. Picks the right scheme (`Bearer` vs `DPoP`), the right `error=` code, and appends optional params:
+
+| Error class | Scheme | `error=` |
+|---|---|---|
+| `TokenMissing`, `TokenExpired`, `InvalidSignature`, `InvalidClaims`, `TokenRevoked`, any other non-DPoP `AuthplaneError` | `Bearer` | `invalid_token` |
+| `InsufficientScope` | `Bearer` | `insufficient_scope` |
+| `DPoPProofMissing`, `InvalidDPoPProof`, `DPoPReplayDetected`, `DPoPBindingMismatch` | `DPoP` | `invalid_token` |
+| `DPoPNotSupported` (carve-out) | `Bearer` | `invalid_token` |
+
+`DPoPNotSupported` is the carve-out: although it extends `DPoPError`, the request was *not* DPoP-bound (the client presented a DPoP signal against a resource that does not accept DPoP), so the retry challenge must be `Bearer`. Subclass ordering in the implementation reflects this.
+
+**Options:**
+
+- `realm?: string` — appended as `realm="…"`.
+- `resourceMetadataUrl?: string` — appended as `resource_metadata="…"` (RFC 9728 §5.1) so clients can discover the AS.
+- `scope?: readonly string[]` — when non-empty, appended as `scope="…"` (RFC 6750), commonly paired with `insufficient_scope`.
+
+**Sanitisation.** All interpolated values (`error.message`, `realm`, `resourceMetadataUrl`, joined `scope`) have CR / LF / `"` / `\` stripped before being spliced into the quoted-string parameter (RFC 9110 §11.4), so a crafted error message cannot terminate the parameter or inject a new header field.
+
+```ts
+import { httpStatus, wwwAuthenticate, TokenExpired } from "@authplane/sdk/core";
+
+try {
+  await resource.verify(token);
+} catch (error) {
+  if (error instanceof AuthplaneError) {
+    res
+      .status(httpStatus(error))
+      .set("WWW-Authenticate", wwwAuthenticate(error, {
+        resourceMetadataUrl: "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+        scope: ["tools/admin"],
+      }))
+      .end();
+  } else {
+    res.status(500).end();
+  }
+}
+```
 
 ## Caching, circuit breaker, and cleanup
 

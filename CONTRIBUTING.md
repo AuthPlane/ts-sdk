@@ -160,7 +160,7 @@ Prerequisites:
 1. OAuth server running locally on `:9000`/`:9001` with client credentials, token exchange, and DPoP enabled.
 2. Demo client registration with required grant types and scopes.
 3. Adapter demo server (`packages/fastmcp/demo/run.sh` or `packages/mcp/demo/run.sh`).
-4. Demo client execution (Python or TypeScript matrix client).
+4. Demo client execution (matrix client).
 
 Entry points:
 

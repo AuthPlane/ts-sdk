@@ -221,11 +221,11 @@ const auth = await authplaneMcpAuth({
   resource: "...",
   scopes: ["tools/read"],
   asCredentials: { clientId: "rs-client", clientSecret: "<secret>" },
-  revocationChecker: IntrospectionRevocation,
+  revocationChecker: IntrospectionRevocation.get(),
 });
 ```
 
-`IntrospectionRevocation` is a marker; the underlying `AuthplaneResource` calls `authserver`'s introspection endpoint on each `verify()`, and throws `TokenRevoked` (mapped to MCP's `InvalidTokenError`) when `active: false` is returned. This adds one round-trip per request; use only if eager revocation matters to your threat model.
+`IntrospectionRevocation.get()` returns the marker singleton; the underlying `AuthplaneResource` calls `authserver`'s introspection endpoint on each `verify()`, and throws `TokenRevoked` (mapped to MCP's `InvalidTokenError`) when `active: false` is returned. This adds one round-trip per request; use only if eager revocation matters to your threat model.
 
 You can also pass a custom `RevocationChecker` — an async function `(claims, rawToken) => Promise<boolean>` — for database-backed revocation lists.
 
@@ -237,7 +237,7 @@ The adapter expects the token in the `Authorization: Bearer <token>` header; any
 
 ### Three-mode DPoP enforcement
 
-Whether DPoP is accepted, required, or rejected is decided per-resource by the presence and shape of `inboundDPoP` (mirrors `python-sdk`):
+Whether DPoP is accepted, required, or rejected is decided per-resource by the presence and shape of `inboundDPoP`:
 
 | Mode | `inboundDPoP` | Bearer-only token | DPoP-bound token (with proof) | DPoP signal on a non-bound token |
 |---|---|---|---|---|
@@ -314,17 +314,20 @@ const auth = await authplaneMcpAuth({
 
 ## Error handling
 
-The adapter converts Authplane errors into MCP SDK error types:
+The adapter funnels every `AuthplaneError` (thrown by the underlying verifier and by the `bearerAuth` middleware's own checks) through `httpStatus(error)` + `wwwAuthenticate(error, { resourceMetadataUrl, scope })` from `@authplane/sdk/core`, so the wire-level mapping — Bearer vs DPoP scheme, 401 vs 403, the `DPoPNotSupported → Bearer` carve-out, header-value sanitisation — is defined once in the SDK and shared with `@authplane/fastmcp`.
 
-| Authplane error | MCP error | HTTP |
-|---|---|---|
-| `TokenMissing` | `InvalidTokenError` | 401 |
-| `TokenExpired`, `InvalidSignature`, `InvalidClaims`, `TokenRevoked` | `InvalidTokenError` | 401 |
-| `InsufficientScope` (from `requiredScopes`) | `InsufficientScopeError` | 403 |
-| `DPoPProofMissing`, `InvalidDPoPProof`, `DPoPReplayDetected`, `DPoPBindingMismatch`, `DPoPNotSupported` | `InvalidTokenError` | 401 |
-| Any other `AuthplaneError` | `InvalidTokenError` | 401 |
+See [**`@authplane/sdk` user guide — HTTP status and WWW-Authenticate challenge**](../../sdk/docs/user-guide.md#http-status-and-www-authenticate-challenge) for the canonical table.
 
-Authentication failures return `WWW-Authenticate: Bearer` (and DPoP hints when applicable) as required by RFC 6750 and RFC 9449.
+The middleware emits a JSON body alongside the `WWW-Authenticate` header:
+
+```json
+{
+  "error": "invalid_token",       // or "insufficient_scope"
+  "error_description": "<the AuthplaneError.message>"
+}
+```
+
+`resource_metadata="…"` is always included so clients can discover the AS; `scope="…"` is included when `requiredScopes` is configured. Non-Authplane errors fall through to a generic 500 (`error: "server_error"`).
 
 ## Cleanup
 
