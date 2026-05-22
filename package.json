@@ -1,7 +1,7 @@
 {
   "name": "authplane-ts-sdk",
   "private": true,
-  "version": "0.2.0-rc.0",
+  "version": "0.2.0",
   "description": "Authplane TypeScript SDK",
   "license": "Apache-2.0",
   "workspaces": [

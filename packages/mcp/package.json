@@ -1,6 +1,6 @@
 {
 	"name": "@authplane/mcp",
-	"version": "0.2.0-rc.0",
+	"version": "0.2.0",
 	"description": "Authplane JWT validation adapter for MCP TypeScript SDK",
 	"keywords": [
 		"mcp",
@@ -53,14 +53,14 @@
 		"@modelcontextprotocol/sdk": "^1.29.0"
 	},
 	"peerDependencies": {
-		"@authplane/sdk": "^0.2.0-rc.0"
+		"@authplane/sdk": "^0.2.0"
 	},
 	"devDependencies": {
 		"@types/express": "^5.0.0",
 		"@types/node": "^24.3.0",
 		"@types/supertest": "^7.2.0",
 		"@vitest/coverage-v8": "4.1.5",
-		"@authplane/sdk": "^0.2.0-rc.0",
+		"@authplane/sdk": "^0.2.0",
 		"dotenv": "^17.3.1",
 		"express": "^4.21.0",
 		"supertest": "^7.2.2",
