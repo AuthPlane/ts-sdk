@@ -23,6 +23,6 @@
     "check": "npm run lint && npm run typecheck && npm run test:coverage"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.9"
+    "@biomejs/biome": "^2.4.16"
   }
 }
