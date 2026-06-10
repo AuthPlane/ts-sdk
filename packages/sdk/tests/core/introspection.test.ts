@@ -23,6 +23,7 @@ describe("introspectToken (RFC 7662)", () => {
             jti: "jti_1",
             agent_id: "agent_1",
             agent_chain: ["a", "b"],
+            cnf: { jkt: "thumbprint_abc" },
           }),
         );
         return;
@@ -54,6 +55,42 @@ describe("introspectToken (RFC 7662)", () => {
       expect(response.jti).toBe("jti_1");
       expect(response.agentId).toBe("agent_1");
       expect(response.agentChain).toEqual(["a", "b"]);
+      // RFC 9449 §6.2: DPoP-bound introspection responses carry the JKT
+      // under `cnf.jkt`. The parser surfaces it as `cnfJkt`.
+      expect(response.cnfJkt).toBe("thumbprint_abc");
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+
+  it("returns an empty cnfJkt when the introspection response omits the cnf claim", async () => {
+    // RFC 9449 §6.2 only requires `cnf.jkt` for DPoP-bound tokens — a
+    // plain bearer token's introspection response omits the field
+    // entirely. The parser must default to "" rather than throw or
+    // produce a misleading value the caller might match against.
+    const server = createServer((req, res) => {
+      if (req.url === "/oauth/introspect" && req.method === "POST") {
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ active: true }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${addr.port}`;
+
+    try {
+      const response = await introspectToken({
+        introspectionEndpoint: `${base}/oauth/introspect`,
+        token: "tok_1",
+        fetchSettings: FetchSettings.fromDevMode(true),
+      });
+      expect(response.cnfJkt).toBe("");
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((err) => (err ? reject(err) : resolve())),

@@ -99,6 +99,29 @@ export class VerifiedClaims {
 		}
 	}
 
+	/**
+	 * AND-style multi-scope check: throws {@link InsufficientScope} unless the
+	 * token carries every scope in `required`. Empty input is a no-op (no
+	 * scopes required = always satisfied).
+	 *
+	 * Adapter middleware (`@authplane/hono` `bearerAuth`, `@authplane/nestjs`
+	 * `AuthplaneAuthGuard`) calls this so the union check has one canonical
+	 * implementation across the SDK. The thrown error names the missing
+	 * scope(s) and the scopes the token does carry — adapters surface this
+	 * verbatim in `error_description`, so a client can see why the request
+	 * was rejected without a separate log lookup.
+	 */
+	public requireScopes(required: readonly string[]): void {
+		if (required.length === 0) return;
+		const missing = required.filter((scope) => !this.hasScope(scope));
+		if (missing.length === 0) return;
+		const quoted = missing.map((scope) => `'${scope}'`).join(", ");
+		const present = this.scopes.length > 0 ? this.scopes.join(", ") : "(none)";
+		throw new InsufficientScope(
+			`Token missing required scope${missing.length > 1 ? "s" : ""} ${quoted}. Token has scopes: ${present}`,
+		);
+	}
+
 	public hasClaim(key: string, value?: unknown): boolean {
 		if (!(key in this.raw)) {
 			return false;

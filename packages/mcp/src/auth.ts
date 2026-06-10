@@ -3,13 +3,13 @@ import {
 	AuthplaneError,
 	type AuthplaneResource,
 	type AuthplaneResourceOptions,
+	buildDPoPRequestContext,
 	type DPoPProvider,
+	extractBearerToken,
+	extractDpopHeaderValues,
 	type FetchSettings,
 	InsufficientScope,
-	InvalidClaims,
 	type ProtectedResourceMetadata,
-	TokenExpired,
-	TokenMissing,
 	httpStatus,
 	wwwAuthenticate,
 } from "@authplane/sdk/core";
@@ -68,6 +68,14 @@ export interface AuthplaneMcpAuthOptions
 	 * include expiry metadata (seconds). Default `3600`.
 	 */
 	defaultTtlSeconds?: number;
+	/**
+	 * Maximum number of entries kept in the outbound token cache before
+	 * least-recently-used eviction kicks in. Default `10_000`. Override on
+	 * hosts with very high subject-token cardinality — token-exchange cache
+	 * keys include the subject token, so this is the bound that actually
+	 * limits memory growth.
+	 */
+	cacheMaxEntries?: number;
 	/**
 	 * Number of consecutive transient AS failures before the circuit breaker
 	 * opens. Default `5`.
@@ -129,6 +137,7 @@ export async function authplaneMcpAuth(
 		metadataRefreshSeconds: verifierOptions.metadataRefreshSeconds,
 		cacheTtlBufferSeconds: options.cacheTtlBufferSeconds,
 		defaultTtlSeconds: options.defaultTtlSeconds,
+		cacheMaxEntries: options.cacheMaxEntries,
 		circuitBreakerThreshold: options.circuitBreakerThreshold,
 		circuitBreakerCooldownSeconds: options.circuitBreakerCooldownSeconds,
 		dpopProvider: options.dpopProvider,
@@ -180,30 +189,44 @@ export async function authplaneMcpAuth(
 	const bearerAuth: RequestHandler = async (req, res, next) => {
 		const effectiveRequiredScopes = resolvedRequiredScopes;
 		try {
-			// Express middleware: we parse Authorization, DPoP, and build an absolute URL for
-			// DPoP `htu` verification. The MCP SDK's OAuthTokenVerifier API takes a raw token
-			// string; there is no upstream hook that supplies a pre-parsed token while also
-			// threading per-request DPoP binding — so extraction stays here.
-			const authHeader = req.headers.authorization;
-			if (!authHeader || Array.isArray(authHeader)) {
-				throw new TokenMissing("Missing Authorization header");
-			}
+			// Express middleware: parse Authorization, DPoP, and build an absolute
+			// URL for DPoP `htu` verification. The MCP SDK's OAuthTokenVerifier
+			// API takes a raw token string; there is no upstream hook that
+			// supplies a pre-parsed token while also threading per-request DPoP
+			// binding — so extraction stays here. Routes through the core
+			// `extractBearerToken` helper so the strictness (and the
+			// `DPoP` scheme carve-out per RFC 9449 §7.1) match
+			// `@authplane/fastmcp`, `@authplane/hono`, and
+			// `@authplane/nestjs` byte-for-byte. `Authorization` is in
+			// Node's fixed de-dup-to-last-value allowlist (alongside
+			// `host`, `content-type`, etc.), so `req.headers.authorization`
+			// is `string | undefined` on real wire traffic — never an
+			// array. The `Array.isArray` guard is defense against the
+			// `string[]` shape that only arrives from `req.rawHeaders` or
+			// hand-built fixtures; we collapse it to `undefined` so the
+			// core helper raises `TokenMissing` instead of accepting a
+			// hand-crafted multi-value bag.
+			const rawAuth = req.headers.authorization;
+			const token = extractBearerToken(
+				Array.isArray(rawAuth) ? undefined : rawAuth,
+			);
 
-			const [rawType, token] = authHeader.split(" ");
-			const type = rawType?.toLowerCase();
-			if (!token || type !== "bearer") {
-				throw new TokenMissing(
-					"Invalid Authorization header format, expected 'Bearer TOKEN'",
-				);
-			}
-
-			// Extract DPoP proof header (FastMCP/SDK uses `dpop` / `DPoP` in practice).
-			// Note: DPoP proof verification requires htu/method matching the incoming HTTP request.
-			let dpopProof: string | undefined;
-			for (const [key, value] of Object.entries(req.headers)) {
-				if (key.toLowerCase() !== "dpop") continue;
-				if (typeof value === "string" && value.length > 0) dpopProof = value;
-			}
+			// Node lowercases header names and types the value as
+			// `string | string[] | undefined`. In practice
+			// `http.IncomingMessage.headers` comma-folds duplicate same-name
+			// values for everything except a fixed allow-list (only
+			// `set-cookie` arrays naturally; `authorization`, `host`, etc.
+			// dedupe to the last value), so two `DPoP` headers on the wire
+			// arrive here as the single string `"proofA, proofB"`. The array
+			// branch still happens for callers that hand-craft `req.headers`
+			// or for adapters that surface `req.rawHeaders` directly, so
+			// `extractDpopHeaderValues` accepts both shapes. The core
+			// factory's comma-split is what catches the folded form — JWS
+			// compact serialisation is base64url + `.` and never contains a
+			// literal `,`, so any comma is necessarily a merged duplicate
+			// and `MultipleDPoPProofs` fires. The catch below funnels that
+			// through `wwwAuthenticate()` to emit the `DPoP` challenge.
+			const dpopHeaderValues = extractDpopHeaderValues(req.headers.dpop);
 
 			// Origin from configured `resource` (not request headers); only the
 			// path varies per-request. `Host` and `X-Forwarded-Proto` are
@@ -212,12 +235,12 @@ export async function authplaneMcpAuth(
 			const url = `${resourceOrigin}${pathAndQuery}`;
 
 			const dpopRequest =
-				dpopProof !== undefined
-					? {
+				dpopHeaderValues.length > 0
+					? buildDPoPRequestContext({
 							method: req.method ?? "POST",
 							url,
-							proof: dpopProof,
-						}
+							dpopHeaderValues,
+						})
 					: undefined;
 			const authInfo: AuthInfo = await tokenVerifier.verifyAccessTokenWithDpop(
 				token,
@@ -233,15 +256,14 @@ export async function authplaneMcpAuth(
 				}
 			}
 
-			if (
-				typeof authInfo.expiresAt !== "number" ||
-				Number.isNaN(authInfo.expiresAt)
-			) {
-				throw new InvalidClaims("Token has no expiration time");
-			} else if (authInfo.expiresAt < Date.now() / 1000) {
-				throw new TokenExpired("Token has expired");
-			}
-
+			// No expiry re-check here: core `resource.verify()` already enforces
+			// `exp` with the configured `clockSkewSeconds` tolerance (and
+			// throws `TokenExpired`). The previous middleware-level
+			// `authInfo.expiresAt < Date.now() / 1000` re-check did the same
+			// thing *without* the clock-skew tolerance, so it could reject
+			// tokens core deemed valid — `@authplane/hono` and
+			// `@authplane/nestjs` deleted the same pattern when their
+			// adapters were thinned out onto the same core helpers.
 			(req as typeof req & { auth?: AuthInfo }).auth = authInfo;
 			next();
 		} catch (error) {

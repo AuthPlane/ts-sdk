@@ -117,6 +117,28 @@ export class DPoPBindingMismatch extends DPoPError {
 }
 
 /**
+ * Raised when an inbound request carries more than one `DPoP` HTTP header.
+ *
+ * RFC 9449 §4.3 #1 is a MUST-level receiving-server check: "There is not
+ * more than one `DPoP` HTTP request header field." Multiple headers signal
+ * either a malformed client or an attempt to confuse the verifier about
+ * which proof binds to the request, so the spec-correct response per §7.1
+ * is `WWW-Authenticate: DPoP error="invalid_dpop_proof"`. The other
+ * `DPoPError` subclasses in this SDK still emit `invalid_token` — only
+ * this §4.3 error code carries `invalid_dpop_proof`. A broader sweep of
+ * the DPoP error-code mapping is a separate change.
+ *
+ * Subclassing `DPoPError` keeps the `DPoP` challenge-scheme selection in
+ * `wwwAuthenticate()`; the error-code override lives next to it.
+ */
+export class MultipleDPoPProofs extends DPoPError {
+	public constructor(message = ERROR_MESSAGES.multipleDpopProofs) {
+		super(message);
+		this.name = "MultipleDPoPProofs";
+	}
+}
+
+/**
  * Raised when a DPoP signal (header or `cnf.jkt`) is presented to a
  * resource that has not opted into inbound DPoP via {@link InboundDPoPOptions}.
  *
@@ -207,7 +229,10 @@ function sanitiseHeaderValue(value: string): string {
  *
  * Maps SDK errors to the correct error code and authentication scheme:
  * - {@link InsufficientScope} → `insufficient_scope`
- * - {@link DPoPError} subclasses → `DPoP` scheme with `invalid_token`
+ * - {@link MultipleDPoPProofs} → `DPoP` scheme with `invalid_dpop_proof`
+ *   (RFC 9449 §7.1 — the spec-defined error code for §4.3
+ *   proof-validation failures)
+ * - Other {@link DPoPError} subclasses → `DPoP` scheme with `invalid_token`
  *   (except {@link DPoPNotSupported}, see below)
  * - All other {@link AuthplaneError} → `Bearer` scheme with `invalid_token`
  *
@@ -231,7 +256,11 @@ export function wwwAuthenticate(
 	} = {},
 ): string {
 	const errorCode =
-		error instanceof InsufficientScope ? "insufficient_scope" : "invalid_token";
+		error instanceof InsufficientScope
+			? "insufficient_scope"
+			: error instanceof MultipleDPoPProofs
+				? "invalid_dpop_proof"
+				: "invalid_token";
 	const scheme =
 		error instanceof DPoPNotSupported
 			? "Bearer"

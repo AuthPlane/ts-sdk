@@ -16,6 +16,15 @@ export interface IntrospectionResponse {
 	jti: string;
 	agentId: string;
 	agentChain: readonly string[];
+	/**
+	 * JWK SHA-256 thumbprint of the public key the access token is bound to,
+	 * as advertised by the introspection endpoint per RFC 9449 §6.2. Empty
+	 * string when the token is not DPoP-bound or the endpoint did not return
+	 * the `cnf.jkt` confirmation. Resource servers that validate via
+	 * introspection (instead of local JWT verification) use this to match
+	 * against the DPoP proof's thumbprint.
+	 */
+	cnfJkt: string;
 }
 
 function parseOptionalNumber(value: unknown): number | null {
@@ -45,6 +54,18 @@ function parseIntrospectionResponse(
 		? rawChain.map((x) => String(x))
 		: [];
 
+	// RFC 9449 §6.2: when an introspected access token is DPoP-bound, the
+	// authorization server returns the JKT under `cnf.jkt`. Parse it here so
+	// resource servers using introspection-only validation (no local JWT
+	// verification) can still enforce sender-binding.
+	const cnf = data.cnf;
+	const cnfJkt =
+		typeof cnf === "object" &&
+		cnf !== null &&
+		typeof (cnf as Record<string, unknown>).jkt === "string"
+			? String((cnf as Record<string, unknown>).jkt)
+			: "";
+
 	return {
 		active: Boolean(data.active ?? false),
 		scope: typeof data.scope === "string" ? data.scope : "",
@@ -58,6 +79,7 @@ function parseIntrospectionResponse(
 		jti: typeof data.jti === "string" ? data.jti : "",
 		agentId: typeof data.agent_id === "string" ? data.agent_id : "",
 		agentChain,
+		cnfJkt,
 	};
 }
 

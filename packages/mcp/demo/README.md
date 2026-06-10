@@ -50,7 +50,7 @@ Tokens must carry the scope for the specific tool being called. A token with onl
    node demo/run-mcp-client.mjs
    ```
 
-   Both fetch an access token from authserver and run `mcp-remote` with Bearer auth. For Cursor/Claude, use the **Node** runner in MCP config (`command: "node"`, `args: ["/path/to/demo/run-mcp-client.mjs"]`) if the host reports "Operation not permitted" when running the `.sh` script. See the [token exchange testing guide](https://github.com/AuthPlane/docs/blob/main/token-exchange-testing-guide.md) (Opción B).
+   Both fetch an access token from authserver and run `mcp-remote` with Bearer auth. For Cursor/Claude, use the **Node** runner in MCP config (`command: "node"`, `args: ["/path/to/demo/run-mcp-client.mjs"]`) if the host reports "Operation not permitted" when running the `.sh` script.
 
 ## How it works
 

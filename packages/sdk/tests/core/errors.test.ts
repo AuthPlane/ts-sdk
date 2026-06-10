@@ -15,6 +15,7 @@ import {
 	JWKSFetchError,
 	MetadataFetchError,
 	MissingMetadataEndpoint,
+	MultipleDPoPProofs,
 	ProtocolError,
 	TokenExpired,
 	TokenMissing,
@@ -153,6 +154,15 @@ describe("wwwAuthenticate", () => {
 				new DPoPBindingMismatch("cnf.jkt mismatch"),
 				"DPoP",
 				"invalid_token",
+			],
+			// RFC 9449 §7.1 carve-out: §4.3 multi-DPoP-header rejection uses
+			// the spec-defined invalid_dpop_proof code, not invalid_token like
+			// the other DPoPError shapes.
+			[
+				"MultipleDPoPProofs",
+				new MultipleDPoPProofs("two DPoP headers"),
+				"DPoP",
+				"invalid_dpop_proof",
 			],
 		])(
 			"%s → %s scheme with %s",

@@ -32,12 +32,25 @@ export class AuthplaneTokenVerifier implements OAuthTokenVerifier {
 		if (!audience) {
 			throw new InvalidClaims("Token audience is missing");
 		}
+
+		// RFC 8707 resource indicators are URIs in practice but the OAuth
+		// `aud` claim itself is just a string — a malformed value is a
+		// token-validity problem (401), not an adapter bug (500). Wrap the
+		// parse so `new URL()`'s TypeError can't escape as a 500.
+		// Mirrors the `@authplane/hono` guard at packages/hono/src/verifier.ts.
+		let resource: URL;
+		try {
+			resource = new URL(audience);
+		} catch {
+			throw new InvalidClaims("Token audience is not a valid URL");
+		}
+
 		return {
 			token,
 			clientId: claims.clientId,
 			scopes: [...claims.scopes],
 			expiresAt: claims.expiresAt,
-			resource: new URL(audience),
+			resource,
 			extra: {
 				sub: claims.sub,
 				iss: claims.issuer,

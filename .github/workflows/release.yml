@@ -169,7 +169,9 @@ jobs:
           fi
           for pkg in \
             packages/mcp/package.json \
-            packages/fastmcp/package.json
+            packages/fastmcp/package.json \
+            packages/hono/package.json \
+            packages/nestjs/package.json
           do
             v="$(node -p "require('./$pkg').version")"
             if [[ "$v" != "$pkg_version" ]]; then
@@ -236,6 +238,8 @@ jobs:
           cd packages/sdk && npm pack
           cd ../mcp && npm pack
           cd ../fastmcp && npm pack
+          cd ../hono && npm pack
+          cd ../nestjs && npm pack
 
       - name: Dry run short-circuit notice
         if: ${{ inputs.dryRun }}

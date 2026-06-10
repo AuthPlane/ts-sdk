@@ -1,0 +1,24 @@
+{
+	"extends": "../tsconfig.json",
+	"compilerOptions": {
+		"rootDir": ".",
+		"noEmit": true,
+		"composite": false,
+		"incremental": false,
+		"experimentalDecorators": true,
+		"emitDecoratorMetadata": true
+	},
+	"include": ["./**/*.ts"],
+	"ts-node": {
+		"esm": true,
+		"experimentalSpecifierResolution": "node",
+		"transpileOnly": true,
+		"compilerOptions": {
+			"module": "NodeNext",
+			"moduleResolution": "NodeNext",
+			"verbatimModuleSyntax": false,
+			"experimentalDecorators": true,
+			"emitDecoratorMetadata": true
+		}
+	}
+}

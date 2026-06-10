@@ -70,15 +70,45 @@ export function buildPrm(
 	return doc;
 }
 
+function parseResourceUrl(resource: string): URL {
+	try {
+		return new URL(resource);
+	} catch (cause) {
+		throw new TypeError(
+			`resource is not a valid URL (got ${JSON.stringify(resource)})`,
+			{ cause },
+		);
+	}
+}
+
+function resourceMetadataSuffix(parsed: URL): string {
+	return parsed.pathname.replace(/\/+$/u, "");
+}
+
 /**
  * RFC 9728 §3.1 — absolute URL of the Protected Resource Metadata document for `resource`.
  *
  * Path template: `/.well-known/oauth-protected-resource{resource-path}`.
+ * Trailing slashes on the resource path are dropped so
+ * `https://api.example.com/mcp/` and `https://api.example.com/mcp` yield the
+ * same document URL.
  */
 export function oauthProtectedResourceMetadataDocumentUrl(
 	resource: string,
 ): string {
-	const parsed = new URL(resource);
-	const resourcePath = parsed.pathname === "/" ? "" : parsed.pathname;
-	return `${parsed.origin}/.well-known/oauth-protected-resource${resourcePath}`;
+	const parsed = parseResourceUrl(resource);
+	return `${parsed.origin}/.well-known/oauth-protected-resource${resourceMetadataSuffix(parsed)}`;
+}
+
+/**
+ * RFC 9728 §3.1 — path (no origin) of the Protected Resource Metadata
+ * document for `resource`. Useful when registering the route on a framework
+ * that requires a literal path at module-registration time (e.g. the NestJS
+ * dynamic module) before any HTTP client has been instantiated.
+ *
+ * @throws TypeError when `resource` is not a valid absolute URL.
+ */
+export function oauthProtectedResourceMetadataPath(resource: string): string {
+	const parsed = parseResourceUrl(resource);
+	return `/.well-known/oauth-protected-resource${resourceMetadataSuffix(parsed)}`;
 }

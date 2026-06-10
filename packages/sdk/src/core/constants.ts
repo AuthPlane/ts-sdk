@@ -39,6 +39,7 @@ export const ERROR_MESSAGES: {
 	dpopReplayDetected: string;
 	dpopBindingMismatch: string;
 	dpopNotSupported: string;
+	multipleDpopProofs: string;
 	authError: string;
 	serverError: string;
 	circuitOpenError: string;
@@ -63,6 +64,8 @@ export const ERROR_MESSAGES: {
 	dpopBindingMismatch: "DPoP proof does not match token binding.",
 	dpopNotSupported:
 		"Resource is not configured for DPoP. Pass `inboundDPoP: { ... }` to client.resource(...) to enable DPoP validation.",
+	multipleDpopProofs:
+		"Request carries more than one DPoP proof; RFC 9449 §4.3 forbids it.",
 	authError: "Authorization server interaction failed.",
 	serverError: "Authorization server returned an error.",
 	circuitOpenError: "Circuit breaker is open; request temporarily blocked.",

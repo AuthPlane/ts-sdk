@@ -1,18 +1,35 @@
 name: Publish to npm
 
-# Tag-triggered publish. The three @authplane/* packages go to npm from
+# Tag-triggered publish. The five @authplane/* packages go to npm from
 # this workflow; release.yml only pushes the tag and lets this workflow
 # take over.
 #
 # Runs on any v*.*.* tag regardless of which branch it points to. The
 # tag itself is the authority — OIDC claim ref = refs/tags/vX.Y.Z, which
 # matches the `npm` environment's tag-only deployment policy.
+#
+# Manual re-dispatch: enabled via `workflow_dispatch` so a failed run can
+# be retried for an existing tag without re-publishing from a developer
+# machine. The OIDC claim is built from `GITHUB_REF` at run time, not
+# from any input — so you MUST dispatch this workflow against the tag
+# ref itself (e.g. `gh workflow run publish-npm.yml -r vX.Y.Z` or the
+# UI's Run-workflow dropdown set to the tag). Dispatching from a branch
+# (main, develop, …) emits an OIDC token with `ref=refs/heads/<branch>`
+# which the tag-only Trusted Publisher policy on npmjs.com will reject.
 
 on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
 
+# Shared with `workflow_dispatch` retries against the same tag — see
+# RELEASE_GUIDE.md → Troubleshooting → "Re-running the publish workflow
+# against a tag" → "Shared concurrency group with the original tag-push
+# run" admonition. `cancel-in-progress` stays `false` deliberately:
+# cancelling mid-publish would risk a partial multi-package upload, the
+# exact failure mode the partial-upload recovery section exists to clean
+# up after. Don't "fix" this group key without reading those docs first.
 concurrency:
   group: publish-npm-${{ github.ref }}
   cancel-in-progress: false
@@ -40,10 +57,20 @@ jobs:
       # and version-dependent. Letting npm use its default registry keeps
       # .npmrc untouched; the @authplane/* packages publish to npmjs.org
       # via npm's defaults.
+      #
+      # Node 24 LTS bundles npm 11.x, which is the floor for OIDC Trusted
+      # Publishing (npm 11.5.1+). Node 22 LTS bundles npm 10.9.x, which
+      # silently skips the OIDC token exchange and falls back to demanding
+      # a classic credential — the failure mode that crashed the `0.2.0`
+      # release tag with `ENEEDAUTH`. Keep this at 24+ so the publish step
+      # actually performs the OIDC handshake and produces the `--provenance`
+      # Sigstore attestation without an in-place npm upgrade. Engines
+      # are satisfied (`>=22` root, `>=20` per-package) and `ci.yml`
+      # already exercises both 22 and 24 in matrix.
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Derive version from tag
@@ -71,7 +98,9 @@ jobs:
           for pkg in \
             packages/sdk/package.json \
             packages/mcp/package.json \
-            packages/fastmcp/package.json
+            packages/fastmcp/package.json \
+            packages/hono/package.json \
+            packages/nestjs/package.json
           do
             pv="$(node -p "require('./$pkg').version")"
             if [[ "$pv" != "$v" ]]; then
@@ -79,7 +108,7 @@ jobs:
               exit 1
             fi
           done
-          echo "All three packages report version $v ✓"
+          echo "All five packages report version $v ✓"
 
       - name: Install dependencies
         run: npm ci
@@ -92,6 +121,8 @@ jobs:
           cd packages/sdk && npm pack
           cd ../mcp && npm pack
           cd ../fastmcp && npm pack
+          cd ../hono && npm pack
+          cd ../nestjs && npm pack
 
       - name: Upload built tarballs (for partial-publish recovery)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -101,6 +132,8 @@ jobs:
             packages/sdk/*.tgz
             packages/mcp/*.tgz
             packages/fastmcp/*.tgz
+            packages/hono/*.tgz
+            packages/nestjs/*.tgz
           if-no-files-found: error
           retention-days: 30
 
@@ -124,6 +157,65 @@ jobs:
       - name: Publish @authplane/fastmcp to npm
         run: npm publish --provenance --access public -w @authplane/fastmcp
 
+      - name: Publish @authplane/hono to npm
+        run: npm publish --provenance --access public -w @authplane/hono
+
+      - name: Publish @authplane/nestjs to npm
+        run: npm publish --provenance --access public -w @authplane/nestjs
+
+      # The whole point of the OIDC Trusted Publishing flow is the Sigstore
+      # provenance attestation. `npm publish --provenance` can succeed
+      # without attaching one (e.g. the publish credential exchange worked
+      # but the attestation upload silently degraded — exactly the kind of
+      # invisible regression that masked `0.2.0`'s ENEEDAUTH until release
+      # time). Read each manifest back and require dist.attestations to
+      # exist. Versions are already on npm at this point, so a failure
+      # here is a loud signal for the maintainer, not a recovery path —
+      # the next release is the first chance to re-attach provenance.
+      #
+      # `if: always()` so a partial-upload failure mid-sequence (sdk OK,
+      # mcp publish fails) still verifies whatever did land on the registry
+      # — that's exactly the case where the loud signal matters most. The
+      # per-package skip below guards against false-failing on packages
+      # this run never managed to publish.
+      #
+      # Brief retry absorbs registry CDN propagation delay between publish
+      # and the read-side manifest reflecting the attestation.
+      - name: Verify provenance attached for each published package
+        if: always()
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          fail=0
+          for p in sdk mcp fastmcp hono nestjs; do
+            # Skip packages that aren't on the registry at this version
+            # (publish step never ran or failed before pushing). Only
+            # verify what actually landed.
+            published="$(npm view --prefer-online "@authplane/${p}@${VERSION}" version 2>/dev/null || true)"
+            if [[ -z "${published}" ]]; then
+              echo "@authplane/${p}@${VERSION} not on registry — skipping provenance check"
+              continue
+            fi
+            pred=""
+            for attempt in 1 2 3; do
+              pred="$(npm view --prefer-online "@authplane/${p}@${VERSION}" dist.attestations.provenance.predicateType 2>/dev/null || true)"
+              if [[ -n "${pred}" ]]; then
+                break
+              fi
+              if [[ "${attempt}" -lt 3 ]]; then
+                echo "attempt ${attempt}: no provenance yet for @authplane/${p}@${VERSION}; retrying in 5s..."
+                sleep 5
+              fi
+            done
+            if [[ -z "${pred}" ]]; then
+              echo "::error::@authplane/${p}@${VERSION} published WITHOUT provenance attestation"
+              fail=1
+            else
+              echo "@authplane/${p}@${VERSION} provenance: ${pred} ✓"
+            fi
+          done
+          exit "${fail}"
+
       - name: Summary
         if: always()
         run: |
@@ -132,5 +224,5 @@ jobs:
             echo ""
             echo "- **Tag**: \`${{ steps.version.outputs.tag }}\`"
             echo "- **Version**: \`${{ steps.version.outputs.version }}\`"
-            echo "- [@authplane/sdk](https://www.npmjs.com/package/@authplane/sdk/v/${{ steps.version.outputs.version }}) · [@authplane/mcp](https://www.npmjs.com/package/@authplane/mcp/v/${{ steps.version.outputs.version }}) · [@authplane/fastmcp](https://www.npmjs.com/package/@authplane/fastmcp/v/${{ steps.version.outputs.version }})"
+            echo "- [@authplane/sdk](https://www.npmjs.com/package/@authplane/sdk/v/${{ steps.version.outputs.version }}) · [@authplane/mcp](https://www.npmjs.com/package/@authplane/mcp/v/${{ steps.version.outputs.version }}) · [@authplane/fastmcp](https://www.npmjs.com/package/@authplane/fastmcp/v/${{ steps.version.outputs.version }}) · [@authplane/hono](https://www.npmjs.com/package/@authplane/hono/v/${{ steps.version.outputs.version }}) · [@authplane/nestjs](https://www.npmjs.com/package/@authplane/nestjs/v/${{ steps.version.outputs.version }})"
           } >> "$GITHUB_STEP_SUMMARY"

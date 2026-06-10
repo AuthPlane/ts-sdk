@@ -19,7 +19,7 @@ Dispatch **Actions → Cut release branch** from `main`. Inputs:
 
 - `releaseVersion`: target version, e.g. `1.3.0` (no prerelease suffix).
 - Leave `hotfixBase` empty.
-- `nextDevVersion`: optional override; defaults to next patch `-dev.0`.
+- `nextDevVersion`: optional override; defaults to next-patch `-dev.0`. **Pre-1.0 the default is usually wrong** — every minor bump can ship a breaking change in 0.x, so the next dev line after cutting `0.Y.0` is `0.<Y+1>.0-dev.0`, not `0.Y.1-dev.0`. Pass `nextDevVersion=0.<Y+1>.0-dev.0` explicitly until the project reaches `1.0.0`. Once we're past 1.0 the patch default lines up with SemVer.
 
 The workflow:
 
@@ -98,11 +98,32 @@ After publish, if any commits on the hotfix branch should also reach `main`, dis
 
 ## Troubleshooting
 
-### Partial npm upload
+### Re-running the publish workflow against a tag (clean retries only)
 
-`publish-npm.yml` publishes the three packages sequentially. If a later publish fails after an earlier one succeeded, the version is already on the registry for the succeeded package(s); re-running the workflow won't help (the tag-exists check refuses, and npm forbids overwriting a published version).
+If the publish workflow fails **before any package was published** (e.g. an OIDC handshake glitch, a transient registry error on the first publish step, runner timeout during build), re-dispatch `publish-npm.yml` against the tag ref. This keeps the OIDC Trusted Publisher flow in play and the retry publishes all three packages with `--provenance`.
 
-Recovery:
+```bash
+# -r MUST be a tag ref (refs/tags/vX.Y.Z) — see OIDC ref gotcha below.
+gh workflow run publish-npm.yml -r v<X.Y.Z>
+```
+
+Or via the UI: **Actions → Publish to npm → Run workflow → Use workflow from: `v<X.Y.Z>`** (select the tag in the branch picker; tags appear under the same dropdown).
+
+> ⚠️ **OIDC ref gotcha.** The OIDC token the npm CLI exchanges is built from `GITHUB_REF` at run time, **not** from any input. Dispatching the workflow from a branch (`main`, `develop`, …) emits an OIDC token with `ref=refs/heads/<branch>`, which the tag-only Trusted Publisher policy on npmjs.com rejects. **Always dispatch against the tag ref directly** as shown above.
+
+> ⚠️ **Not for partial uploads.** `npm publish` is **not** idempotent against an existing `name@version`: it fails with `EPUBLISHCONFLICT` (HTTP 403, "You cannot publish over the previously published versions"). If one or two of the three packages already published before the failure, a re-dispatch will halt at the first `npm publish` step that hits an already-published version and never reach the remaining packages. Use the manual artifact flow below instead.
+
+> ⚠️ **Shared concurrency group with the original tag-push run.** The workflow keys its concurrency group on `github.ref` (`refs/tags/vX.Y.Z`) with `cancel-in-progress: false`, so the tag-push run and a `workflow_dispatch` retry against the same tag share one slot. If the original tag-push run is still **pending environment approval** in the `npm` environment, a retry dispatch queues behind it rather than replacing it — and the retry will never start until the pending one is approved or cancelled. **Cancel the stuck pending-approval run first**, then dispatch the retry.
+
+### Failed or partial publish (one or more packages not yet on the registry)
+
+Covers both shapes: the workflow failed *entirely* before any package landed (the first `npm publish` step blew up, so nothing else was attempted) and the partial shape where some `@authplane/*` packages at this version are already on the registry and others aren't. The whole-failure case happens when the *first* publish step fails atomically; the partial case happens when a later step fails. Recovery is the same flow either way — only the set of missing packages changes.
+
+You cannot recover either shape via the workflow when there are *already-published* packages: `npm publish` rejects the published ones with `EPUBLISHCONFLICT` and the run dies before reaching the missing ones. Use the CI-built tarball artifact + a targeted manual publish.
+
+**Manual publishes lose the `--provenance` Sigstore attestation** on the recovered packages — manual `npm publish` cannot produce the Sigstore signature because the OIDC exchange runs only inside GitHub Actions. Packages that did publish via CI keep their attestation; manually-recovered ones never get one for this version.
+
+> ⚠️ **Downstream `npm audit signatures` impact.** After a manual recovery, consumers of the manually-published packages at this version will see `npm audit signatures` report missing/unverifiable attestations for exactly those packages (not the CI-published ones). This is permanent for this version — npm versions are immutable, and provenance attaches at publish time. The attestation gap closes from the next release tag onwards. If a consumer pipeline gates on `audit signatures`, they'll need a one-version allowlist for the affected `@authplane/<pkg>@<X.Y.Z>` entries, or to pin past this version.
 
 1. Download the `dist-v<X.Y.Z>` build artifact from the failed workflow run. Structure:
    ```
@@ -110,16 +131,47 @@ Recovery:
    packages/mcp/authplane-mcp-X.Y.Z.tgz
    packages/fastmcp/authplane-fastmcp-X.Y.Z.tgz
    ```
-2. For each missing package, authenticate locally (`npm login` as an `@authplane` org member) and publish the tarball from the artifact:
+2. **Verify tarball integrity before publishing.** Each `.tgz` carries a checksum that the failed workflow logged at pack time (look for `npm notice shasum:` and `npm notice integrity:` lines in the workflow log — the pack step emits one block per package). Compare locally to confirm you're shipping exactly what CI built:
    ```bash
-   npm publish --access public packages/<pkg>/authplane-<pkg>-X.Y.Z.tgz
+   # SHA-1 — compare against `npm notice shasum: <hex>` (hex output).
+   shasum -a 1 packages/<pkg>/authplane-<pkg>-X.Y.Z.tgz
+
+   # SHA-512 — compare against `npm notice integrity: sha512-<base64>`.
+   # npm's `integrity:` field is base64 (not hex), so pipe through base64.
+   openssl dgst -sha512 -binary packages/<pkg>/authplane-<pkg>-X.Y.Z.tgz | openssl base64 -A
    ```
-3. If the workflow also failed before creating the GitHub Release:
+   For the whole-failure case the *pack-step* notices cover all three packages (every tarball was built before any publish). For a partial failure the *publish-step* notice covers the package that was mid-upload when the run died. Skip this check and you risk republishing a stale or wrong-version artifact.
+3. **Publish in dependency order**: `@authplane/sdk` → `@authplane/mcp` → `@authplane/fastmcp`. `mcp` and `fastmcp` peer-depend on `@authplane/sdk`, so it must be on the registry first; publishing them ahead of `sdk` poisons consumer installs until `sdk` lands. (For a partial recovery, this matters only when `sdk` is among the missing set.)
+   ```bash
+   # `npm login` as an `@authplane` org member first.
+   # NOTE: `--provenance` is intentionally absent — see the caveat above.
+   npm publish --access public packages/sdk/authplane-sdk-X.Y.Z.tgz
+   npm publish --access public packages/mcp/authplane-mcp-X.Y.Z.tgz
+   npm publish --access public packages/fastmcp/authplane-fastmcp-X.Y.Z.tgz
+   ```
+   Skip packages already on the registry — `npm view @authplane/<pkg>@<X.Y.Z>` returns the manifest when present, errors with `E404` when not.
+4. If the workflow also failed before creating the GitHub Release:
    ```bash
    gh release create v<X.Y.Z> --title v<X.Y.Z> --notes-file <path-to-notes>
    ```
    No `--target` — the tag already points at the correct commit.
-4. If any commits on the source branch need to reach `main`, dispatch **Backport fixes** with `fromBranch=v<X.Y.Z>` (the tag — the branch is deleted after the atomic push).
+5. If any commits on the source branch need to reach `main`, dispatch **Backport fixes** with `fromBranch=v<X.Y.Z>` (the tag — the branch is deleted after the atomic push).
+
+### Publish fails with `ENEEDAUTH` (Trusted Publishing didn't engage)
+
+`publish-npm.yml` authenticates to npm via Trusted Publishing (OIDC) — no long-lived `NPM_TOKEN` secret. The OIDC exchange requires **npm ≥ 11.5.1**; older npm versions silently *skip* the OIDC handshake and fall back to demanding a classic credential, which the workflow doesn't supply, so the publish step dies with:
+
+```
+npm error code ENEEDAUTH
+npm error need auth This command requires you to be logged in to https://registry.npmjs.org/
+```
+
+Node 22 LTS bundles npm 10.x at install time, so a runner pinned to `node-version: 22` hit this even on a fresh install. **The durable fix is already in place**: `publish-npm.yml` pins `node-version: 24` (npm 11.x), so a *current* `ENEEDAUTH` in CI means a regression — most likely the `node-version` line got downgraded, or the publish runs through some surface that bypasses `setup-node`. A future operator hitting this should look for that regression first, not assume the fix needs applying.
+
+When you see `ENEEDAUTH`:
+
+- **Workflow CI failure**: confirm the runner's `npm --version` in the workflow log is ≥ 11.5.1. If lower, restore the `node-version: 24` pin (or higher), or add an explicit `npm install -g npm@latest` step before the publish — whichever is missing.
+- **Manual recovery publish**: if you publish locally as a one-off, run `npm install -g npm@latest` first if you want provenance. If your local npm is < 11.5.1, the publish still succeeds *without* provenance (classic-credential path) — that's the same attestation-gap outcome as any other manual recovery (see *Failed or partial publish* above).
 
 ### Next-dev bump PR fails to open
 

@@ -37,6 +37,66 @@ describe("VerifiedClaims", () => {
     expect(() => claims.requireScope("tools/admin")).toThrow(InsufficientScope);
   });
 
+  describe("requireScopes (AND)", () => {
+    it("is a no-op when the required list is empty", () => {
+      const claims = makeClaims();
+      expect(() => claims.requireScopes([])).not.toThrow();
+    });
+
+    it("passes when every required scope is present", () => {
+      const claims = makeClaims();
+      expect(() =>
+        claims.requireScopes(["tools/query", "tools/write"]),
+      ).not.toThrow();
+    });
+
+    it("throws InsufficientScope naming the missing scope and present scopes", () => {
+      const claims = makeClaims();
+      expect(() =>
+        claims.requireScopes(["tools/query", "tools/admin"]),
+      ).toThrow(InsufficientScope);
+      expect(() =>
+        claims.requireScopes(["tools/query", "tools/admin"]),
+      ).toThrow(
+        "Token missing required scope 'tools/admin'. Token has scopes: tools/query, tools/write",
+      );
+    });
+
+    it("pluralises the message and lists every missing scope", () => {
+      const claims = makeClaims();
+      expect(() =>
+        claims.requireScopes(["tools/admin", "tools/superuser"]),
+      ).toThrow(
+        "Token missing required scopes 'tools/admin', 'tools/superuser'. Token has scopes: tools/query, tools/write",
+      );
+    });
+
+    it("throws InsufficientScope when the token has no scopes at all", () => {
+      const claims = new VerifiedClaims({
+        sub: "u",
+        clientId: "c",
+        scopes: [],
+        issuer: "https://auth.example.com",
+        audience: ["https://api.example.com"],
+        expiresAt: 1_800_000_000,
+        issuedAt: 1_700_000_000,
+        jti: "j",
+        kid: "k",
+        agentId: "",
+        agentChain: [],
+        notBefore: 0,
+        raw: {},
+      });
+      expect(() => claims.requireScopes(["tools/query"])).toThrow(
+        InsufficientScope,
+      );
+      // Empty scope list surfaces as "(none)" so the message stays grammatical.
+      expect(() => claims.requireScopes(["tools/query"])).toThrow(
+        "Token has scopes: (none)",
+      );
+    });
+  });
+
   it("checks raw claims", () => {
     const claims = makeClaims();
     expect(claims.hasClaim("tenant_id")).toBe(true);

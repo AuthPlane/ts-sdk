@@ -20,6 +20,5 @@ export interface TokenResponse {
 	scope: string;
 	refreshToken: string;
 	issuedTokenType: string;
-	cnfJkt: string;
 	raw: Readonly<Record<string, unknown>>;
 }

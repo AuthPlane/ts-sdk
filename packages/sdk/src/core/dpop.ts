@@ -16,6 +16,7 @@ import {
 	DPoPProofMissing,
 	DPoPReplayDetected,
 	InvalidDPoPProof,
+	MultipleDPoPProofs,
 } from "./errors.js";
 
 // Re-export client-side DPoP so `@authplane/sdk/core` consumers still have a
@@ -35,16 +36,81 @@ export type SupportedDPoPAlgorithm = (typeof SUPPORTED_DPOP_ALGORITHMS)[number];
 /**
  * Per-request DPoP inputs for {@link AuthplaneResource.verify}.
  *
- * Carries only what RFC 9449 §7 says is per-request: the proof JWT and the
- * binding to this HTTP request (`htm`/`htu`). Replay store, accepted proof
- * algorithms, max proof age, and clock skew are per-resource configuration
- * carried on {@link InboundDPoPOptions}; mixing them per-call let two
- * handlers on the same resource deduplicate against different stores.
+ * Carries only what RFC 9449 §7 says is per-request: the proof JWT(s) and
+ * the binding to this HTTP request (`htm`/`htu`). Replay store, accepted
+ * proof algorithms, max proof age, and clock skew are per-resource
+ * configuration carried on {@link InboundDPoPOptions}; mixing them
+ * per-call let two handlers on the same resource deduplicate against
+ * different stores.
+ *
+ * `proofs` is `readonly string[]` rather than `string | undefined` so RFC
+ * 9449 §4.3 #1 ("not more than one DPoP HTTP request header field") has a
+ * canonical enforcement boundary. Build instances via
+ * {@link buildDPoPRequestContext} so a malformed multi-header request
+ * fails fast with {@link MultipleDPoPProofs}; constructing the object
+ * directly assumes the caller has already discharged §4.3.
  */
 export interface DPoPRequestContext {
 	method: string;
 	url: string;
-	proof?: string | undefined;
+	/**
+	 * At most one validated DPoP proof. Empty when no proof accompanied
+	 * the request; never longer than 1 — the factory enforces §4.3
+	 * before this object is constructed.
+	 */
+	proofs: readonly string[];
+}
+
+/**
+ * Build a {@link DPoPRequestContext} from the raw `DPoP` header values
+ * the framework adapter pulled off the inbound request, enforcing
+ * RFC 9449 §4.3 #1 as the SDK's canonical boundary.
+ *
+ * `dpopHeaderValues` is the list of values for the `DPoP` header on the
+ * inbound request. Pass:
+ *   - `[]` when no `DPoP` header is present.
+ *   - `["<proof>"]` when exactly one `DPoP` header is present.
+ *   - `["<a>", "<b>"]` when the underlying HTTP framework preserved
+ *     multiple separate headers (Node `req.rawHeaders`, Java
+ *     `request.getHeaders`).
+ *
+ * Frameworks that pre-join duplicate headers into a single
+ * comma-separated value (Fetch-style `Headers`, Node `req.headers`
+ * for non-special headers) should pass the joined string verbatim —
+ * this factory splits on `,` defensively so a §4.3 violation is
+ * detectable at this boundary. JWS compact-serialised proofs never
+ * contain a literal comma, so split-on-comma is sound.
+ *
+ * Empty / whitespace-only entries are dropped. After filtering, more
+ * than one non-empty value throws {@link MultipleDPoPProofs}.
+ */
+export function buildDPoPRequestContext(params: {
+	method: string;
+	url: string;
+	dpopHeaderValues: readonly string[];
+}): DPoPRequestContext {
+	const filtered: string[] = [];
+	for (const raw of params.dpopHeaderValues) {
+		const trimmed = raw.trim();
+		if (trimmed.length === 0) continue;
+		// Split on `,` defensively: Fetch-style Headers and Node's default
+		// `req.headers` collapse duplicate same-name headers into a single
+		// comma-joined value. JWS compact serialisation is base64url + `.`
+		// and never contains a literal `,`, so any `,` in a real DPoP
+		// header value is the signature of a previously-merged duplicate.
+		for (const part of trimmed.split(",")) {
+			const piece = part.trim();
+			if (piece.length > 0) filtered.push(piece);
+		}
+	}
+	if (filtered.length > 1) {
+		throw new MultipleDPoPProofs();
+	}
+	return {
+		method: params.method,
+		url: params.url,
+		proofs: Object.freeze(filtered),
+	};
 }
 
 export interface VerifiedDPoPProof {
@@ -314,8 +380,9 @@ export async function verifyDpopProof(options: {
 }
 
 export function requireDpopProof(ctx: DPoPRequestContext | undefined): string {
-	if (!ctx?.proof) {
+	const proof = ctx?.proofs[0];
+	if (!proof) {
 		throw new DPoPProofMissing();
 	}
-	return ctx.proof;
+	return proof;
 }

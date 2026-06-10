@@ -32,7 +32,6 @@ function okTokenResponse(overrides: Partial<TokenResponse> = {}): Record<string,
     refresh_token: overrides.refreshToken ?? "",
     issued_token_type:
       overrides.issuedTokenType ?? "urn:ietf:params:oauth:token-type:access_token",
-    cnf: overrides.cnfJkt ? { jkt: overrides.cnfJkt } : undefined,
   };
 }
 
@@ -188,6 +187,98 @@ describe("AuthplaneClient unit (metadata, basic auth, cache hit)", () => {
       expect(introspected.scope).toBe("tools/echo");
 
       await expect(client.revoke("some_token")).resolves.toBeUndefined();
+    } finally {
+      await new Promise<void>((resolve) => asServer.close(() => resolve()));
+    }
+  });
+
+  it("AuthplaneClient.create({ cacheMaxEntries }) honors the cap end-to-end", async () => {
+    // End-to-end plumbing test: assert that the `cacheMaxEntries` option
+    // actually reaches the `TokenCache` constructor (not just the
+    // adapter-level forwarding the four adapter test suites already
+    // pin). We mock an AS that returns distinct tokens per scope and
+    // count token-endpoint hits; with `cacheMaxEntries: 2`, three
+    // distinct-scope `clientCredentials` calls populate three entries —
+    // the LRU (first call) must be evicted, so re-requesting it issues
+    // a fresh token-endpoint hit. The most-recently-touched entry stays
+    // cached (no extra hit).
+    const asServer = createServer();
+    let tokenRequests = 0;
+
+    asServer.on("request", async (req, res) => {
+      if (!req.url) {
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
+      const port = (asServer.address() as AddressInfo).port;
+      if (
+        req.method === "GET" &&
+        req.url === "/.well-known/oauth-authorization-server"
+      ) {
+        res.setHeader("content-type", "application/json");
+        res.end(
+          JSON.stringify({
+            issuer: `http://127.0.0.1:${port}`,
+            jwks_uri: `http://127.0.0.1:${port}/.well-known/jwks.json`,
+            token_endpoint: `http://127.0.0.1:${port}/oauth/token`,
+          }),
+        );
+        return;
+      }
+      if (req.method === "GET" && req.url === "/.well-known/jwks.json") {
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ keys: [] }));
+        return;
+      }
+      if (req.method === "POST" && req.url === "/oauth/token") {
+        tokenRequests += 1;
+        const body = await readRequestBody(req);
+        const scope = urlSearchParamsBody(body).get("scope") ?? "";
+        res.setHeader("content-type", "application/json");
+        res.end(
+          JSON.stringify(
+            okTokenResponse({
+              accessToken: `at_${tokenRequests}_${scope}`,
+              scope,
+            }),
+          ),
+        );
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => asServer.listen(0, "127.0.0.1", resolve));
+    const addr = asServer.address() as AddressInfo;
+    const base = `http://127.0.0.1:${addr.port}`;
+
+    try {
+      const client = await AuthplaneClient.create({
+        issuer: base,
+        devMode: true,
+        auth: { clientId: "client_1", clientSecret: "secret_1" },
+        jwksRefreshSeconds: 60,
+        metadataRefreshSeconds: 60,
+        cacheMaxEntries: 2,
+      });
+
+      // Populate three distinct cache entries against a cap of 2.
+      await client.clientCredentials(["a"]);
+      await client.clientCredentials(["b"]);
+      await client.clientCredentials(["c"]);
+      expect(tokenRequests).toBe(3);
+
+      // "a" was the first inserted and has not been touched since — it
+      // should be the LRU victim evicted when "c" landed. Re-requesting
+      // it must hit the AS again.
+      await client.clientCredentials(["a"]);
+      expect(tokenRequests).toBe(4);
+
+      // "c" is the most-recently-set entry; still in cache, no extra hit.
+      await client.clientCredentials(["c"]);
+      expect(tokenRequests).toBe(4);
     } finally {
       await new Promise<void>((resolve) => asServer.close(() => resolve()));
     }

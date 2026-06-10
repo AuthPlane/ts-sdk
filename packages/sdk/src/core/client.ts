@@ -71,6 +71,13 @@ export class AuthplaneClient {
 		metadataRefreshSeconds?: number | undefined;
 		cacheTtlBufferSeconds?: number | undefined;
 		defaultTtlSeconds?: number | undefined;
+		/**
+		 * Maximum number of entries kept in the outbound token cache.
+		 * Default `10_000`. Override on hosts with very high subject-token
+		 * cardinality (token-exchange keys include the subject token, so this
+		 * is the bound that actually limits memory growth).
+		 */
+		cacheMaxEntries?: number | undefined;
 		circuitBreakerThreshold?: number | undefined;
 		circuitBreakerCooldownSeconds?: number | undefined;
 		dpopProvider?: DPoPProvider | undefined;
@@ -89,6 +96,7 @@ export class AuthplaneClient {
 		client.tokenCache = new TokenCache<TokenResponse>(
 			options.cacheTtlBufferSeconds ?? 30,
 			options.defaultTtlSeconds ?? 3600,
+			options.cacheMaxEntries ?? TokenCache.DEFAULT_MAX_ENTRIES,
 		);
 		client.circuitBreaker = new CircuitBreaker(
 			options.circuitBreakerThreshold ?? 5,

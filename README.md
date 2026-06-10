@@ -1,6 +1,6 @@
 # Authplane TypeScript SDK
 
-OAuth, JWT validation, and MCP-authentication primitives for Node.js. Works with Express, FastMCP, and the official MCP TypeScript SDK.
+OAuth, JWT validation, and MCP-authentication primitives for Node.js. Ships framework adapters for Hono, NestJS, FastMCP, and the official MCP TypeScript SDK.
 
 ## Packages
 
@@ -9,6 +9,8 @@ OAuth, JWT validation, and MCP-authentication primitives for Node.js. Works with
 | [`@authplane/sdk`](packages/sdk) | `npm install @authplane/sdk` | JWT validation and OAuth protocol primitives. Ships the stateful `AuthplaneClient` (`@authplane/sdk/core`) plus stateless OAuth protocol helpers (`@authplane/sdk/auth`). |
 | [`@authplane/mcp`](packages/mcp) | `npm install @authplane/sdk @authplane/mcp` | JWT validation adapter for the MCP TypeScript SDK |
 | [`@authplane/fastmcp`](packages/fastmcp) | `npm install @authplane/sdk @authplane/fastmcp` | JWT validation adapter for FastMCP |
+| [`@authplane/hono`](packages/hono) | `npm install @authplane/sdk @authplane/hono` | JWT validation middleware for the Hono web framework |
+| [`@authplane/nestjs`](packages/nestjs) | `npm install @authplane/sdk @authplane/nestjs` | NestJS module: guard + decorators + exception filter + PRM controller |
 
 ## Requirements
 
@@ -69,7 +71,9 @@ For the MCP TypeScript SDK variant, see the [`@authplane/mcp` README](packages/m
 
 - [`@authplane/mcp`](packages/mcp/README.md) — adapter for the official MCP TypeScript SDK.
 - [`@authplane/fastmcp`](packages/fastmcp/README.md) — adapter for FastMCP.
-- Both adapters integrate with Express / Node.js `http` through the MCP and FastMCP transports.
+- [`@authplane/hono`](packages/hono/README.md) — middleware for the Hono web framework (Bearer / DPoP, RFC 6750 `WWW-Authenticate`, PRM handler, scope enforcement).
+- [`@authplane/nestjs`](packages/nestjs/README.md) — NestJS module: `AuthplaneAuthGuard`, `@SkipAuth()` / `@RequireScopes(...)` decorators, exception filter mapping to RFC 6750 §3 responses, and an RFC 9728 PRM controller. Works on Express and Fastify platform adapters.
+- The MCP / FastMCP adapters integrate with Express / Node.js `http` through their respective transports; the Hono adapter is framework-native middleware; the NestJS adapter integrates with whatever platform NestJS is hosted on.
 
 ## Documentation
 
@@ -78,6 +82,8 @@ Each package ships its own README (overview) and User Guide (complete reference)
 - **`@authplane/sdk`** — [README](packages/sdk/README.md) · [User Guide](packages/sdk/docs/user-guide.md)
 - **`@authplane/mcp`** — [README](packages/mcp/README.md) · [User Guide](packages/mcp/docs/user-guide.md)
 - **`@authplane/fastmcp`** — [README](packages/fastmcp/README.md) · [User Guide](packages/fastmcp/docs/user-guide.md)
+- **`@authplane/hono`** — [README](packages/hono/README.md) · [User Guide](packages/hono/docs/user-guide.md)
+- **`@authplane/nestjs`** — [README](packages/nestjs/README.md) · [User Guide](packages/nestjs/docs/user-guide.md)
 
 Other docs:
 

@@ -40,6 +40,7 @@ export * from "../auth/oauth/revocation.js";
 export * from "../auth/oauth/tokenExchange.js";
 export * from "../auth/oauth/types.js";
 export * from "./authProvider.js";
+export * from "./bearerToken.js";
 export * from "./cache.js";
 export * from "./circuitBreaker.js";
 export * from "./claims.js";
@@ -50,6 +51,7 @@ export * from "./credentials.js";
 export * from "./dpop.js";
 export * from "./errors.js";
 export * from "./prm.js";
+export * from "./requestContext.js";
 export {
 	AuthplaneResource,
 	type AuthplaneResourceOptions,
