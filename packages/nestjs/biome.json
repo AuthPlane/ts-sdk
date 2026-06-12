@@ -1,0 +1,30 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.9/schema.json",
+	"javascript": {
+		"parser": {
+			"unsafeParameterDecoratorsEnabled": true
+		}
+	},
+	"linter": {
+		"rules": {
+			"complexity": {
+				"noStaticOnlyClass": "off"
+			},
+			"correctness": {
+				"noUnusedFunctionParameters": "off"
+			}
+		}
+	},
+	"overrides": [
+		{
+			"includes": ["src/**/*.ts"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noExplicitAny": "off"
+					}
+				}
+			}
+		}
+	]
+}

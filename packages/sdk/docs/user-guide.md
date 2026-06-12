@@ -193,7 +193,10 @@ PRM advertising follows the same switch: when `inboundDPoP` is configured the re
 ### Verifying a DPoP proof on an inbound request
 
 ```ts
-import { type DPoPRequestContext } from "@authplane/sdk/core";
+import {
+  buildDPoPRequestContext,
+  extractDpopHeaderValues,
+} from "@authplane/sdk/core";
 
 // Mode 2 — Supported. The resource allocates an in-memory replay store at
 // construction; for multi-process deployments pass your own via inboundDPoP.replayStore.
@@ -203,11 +206,18 @@ const resource = client.resource({
   inboundDPoP: {},
 });
 
-const dpopRequest: DPoPRequestContext = {
-  proof: request.headers["dpop"] as string, // the DPoP header value
-  method: request.method,                     // e.g. "POST"
-  url: `${baseUrl}${request.path}`,           // absolute URL, used for htu match
-};
+// `buildDPoPRequestContext` is the §4.3 boundary: it filters blanks and
+// throws `MultipleDPoPProofs` when more than one non-blank value remains,
+// so a request carrying two DPoP headers fails fast with a
+// `DPoP error="invalid_dpop_proof"` challenge (RFC 9449 §7.1) instead of
+// the verifier silently picking one. `extractDpopHeaderValues` normalises
+// the framework-specific header shape (string | string[] | undefined)
+// without losing duplicates.
+const dpopRequest = buildDPoPRequestContext({
+  method: request.method,                  // e.g. "POST"
+  url: `${baseUrl}${request.path}`,        // absolute URL, used for htu match
+  dpopHeaderValues: extractDpopHeaderValues(request.headers["dpop"]),
+});
 
 const claims = await resource.verify(bearerToken, { dpopRequest });
 // claims.dpopProof.jkt is the verified public-key thumbprint;
@@ -222,7 +232,7 @@ When a `dpopRequest` is provided to a DPoP-supporting resource, the verifier che
 - The proof's `jti` has not been seen before by the resource's replay store.
 - The token's `cnf.jkt` claim matches the proof's public-key thumbprint.
 
-If `dpopRequest` is omitted altogether, `verify()` throws `DPoPBindingMismatch`. If `dpopRequest` is supplied but its `proof` is missing, `verify()` throws `DPoPProofMissing`. Other binding mismatches (proof's public-key thumbprint does not match the token's `cnf.jkt`, `htu`/`htm`/`ath` mismatch, etc.) throw `DPoPBindingMismatch`; replays throw `DPoPReplayDetected`. Sending a DPoP signal to a resource that did not opt into DPoP throws `DPoPNotSupported`.
+If `dpopRequest` is omitted altogether, `verify()` throws `DPoPBindingMismatch`. If `dpopRequest` is supplied but `proofs` is empty, `verify()` throws `DPoPProofMissing`. If `proofs` carries more than one non-blank value, `verify()` throws `MultipleDPoPProofs` and the resulting `WWW-Authenticate` challenge carries `DPoP error="invalid_dpop_proof"` per RFC 9449 §7.1. Other binding mismatches (proof's public-key thumbprint does not match the token's `cnf.jkt`, `htu`/`htm`/`ath` mismatch, etc.) throw `DPoPBindingMismatch`; replays throw `DPoPReplayDetected`. Sending a DPoP signal to a resource that did not opt into DPoP throws `DPoPNotSupported`.
 
 ### `InboundDPoPOptions`
 
@@ -340,6 +350,16 @@ Useful for service-to-service calls where a frontend API needs a narrowed or re-
 ```ts
 const info = await client.introspect(token);
 if (!info.active) { /* ... */ }
+
+// RFC 9449 §6.2 exposes the DPoP confirmation thumbprint at the top
+// level of the introspection response — the standardized location for
+// opaque (non-JWT) DPoP-bound tokens. The SDK surfaces it as
+// `info.cnfJkt`; when present, callers can match it against the proof
+// public-key thumbprint to confirm the DPoP binding outside the JWT
+// fast-path.
+if (info.cnfJkt) {
+  // info.cnfJkt is the base64url SHA-256 JWK thumbprint.
+}
 
 await client.revoke(token); // RFC 7009
 ```

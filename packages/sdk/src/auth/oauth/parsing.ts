@@ -39,14 +39,6 @@ export function parseTokenResponse(
 	const issuedTokenType =
 		typeof data.issued_token_type === "string" ? data.issued_token_type : "";
 
-	const cnf = data.cnf;
-	const cnfJkt =
-		typeof cnf === "object" &&
-		cnf !== null &&
-		typeof (cnf as Record<string, unknown>).jkt === "string"
-			? String((cnf as Record<string, unknown>).jkt)
-			: "";
-
 	if (!accessToken || !tokenType) {
 		throw new ProtocolError(
 			"authplane: token response missing required fields",
@@ -87,7 +79,6 @@ export function parseTokenResponse(
 		scope,
 		refreshToken,
 		issuedTokenType,
-		cnfJkt,
 		raw: Object.freeze({ ...data }),
 	};
 }

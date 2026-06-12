@@ -31,6 +31,8 @@ const files = [
 	"packages/sdk/package.json",
 	"packages/mcp/package.json",
 	"packages/fastmcp/package.json",
+	"packages/hono/package.json",
+	"packages/nestjs/package.json",
 ];
 
 /**
@@ -77,7 +79,13 @@ function syncPackageLockWorkspaceSnapshots(repoRoot, packagesByWorkspaceDir) {
 	}
 	lock.packages[""].version = rootPkg.version;
 
-	const workspaceDirs = ["packages/sdk", "packages/mcp", "packages/fastmcp"];
+	const workspaceDirs = [
+		"packages/sdk",
+		"packages/mcp",
+		"packages/fastmcp",
+		"packages/hono",
+		"packages/nestjs",
+	];
 	for (const dir of workspaceDirs) {
 		const pkg = packagesByWorkspaceDir.get(dir);
 		if (!pkg) {

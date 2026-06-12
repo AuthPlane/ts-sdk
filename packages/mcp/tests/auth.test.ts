@@ -149,6 +149,46 @@ describe("authplaneMcpAuth", () => {
     expect(result.client).toBe(mockClient);
   });
 
+  it("forwards cache tunables (cacheTtlBufferSeconds, defaultTtlSeconds, cacheMaxEntries) to AuthplaneClient.create()", async () => {
+    const mockResource = {
+      verify: vi.fn(),
+      prmResponse: vi.fn(() => ({
+        resource: "https://api.example.com/mcp",
+        authorization_servers: ["https://auth.example.com"],
+        scopes_supported: [],
+        bearer_methods_supported: ["header"],
+      })),
+      prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+    } as unknown as AuthplaneResource;
+
+    const mockClient = {
+      resource: vi.fn(() => mockResource),
+      exchange: vi.fn(),
+    } as unknown as AuthplaneClient;
+
+    const createSpy = vi
+      .spyOn(AuthplaneClient, "create")
+      .mockResolvedValue(mockClient);
+
+    await authplaneMcpAuth({
+      issuer: "https://auth.example.com",
+      resource: "https://api.example.com/mcp",
+      cacheTtlBufferSeconds: 45,
+      defaultTtlSeconds: 1800,
+      cacheMaxEntries: 256,
+    });
+
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cacheTtlBufferSeconds: 45,
+        defaultTtlSeconds: 1800,
+        cacheMaxEntries: 256,
+      }),
+    );
+  });
+
   it("forwards all optional verifier config to AuthplaneClient.resource()", async () => {
     const mockResource = {
       verify: vi.fn(),

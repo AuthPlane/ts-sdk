@@ -1168,7 +1168,7 @@ conformanceCase(
 				dpopRequest: {
 					method: "GET",
 					url: requestUrl,
-					proof,
+					proofs: [proof],
 				},
 			});
 			expect(claims.sub).toBe("user123");
@@ -1192,6 +1192,7 @@ conformanceCase(
 				dpopRequest: {
 					method: "GET",
 					url: `${fixture.server.origin}/api/resource`,
+					proofs: [],
 				},
 			});
 			expect(claims.sub).toBe("user123");
@@ -1213,6 +1214,7 @@ conformanceCase(
 					dpopRequest: {
 						method: "GET",
 						url: `${fixture.server.origin}/api/resource`,
+						proofs: [],
 					},
 				}),
 			).rejects.toBeInstanceOf(DPoPProofMissing);
@@ -1237,6 +1239,7 @@ conformanceCase(
 					dpopRequest: {
 						method: "GET",
 						url: `${fixture.server.origin}/api/resource`,
+						proofs: [],
 					},
 				}),
 			).rejects.toBeInstanceOf(DPoPProofMissing);
@@ -1272,7 +1275,7 @@ conformanceCase(
 					dpopRequest: {
 						method: "GET",
 						url: `${fixture.server.origin}/api/resource`,
-						proof,
+						proofs: [proof],
 					},
 				}),
 			).rejects.toBeInstanceOf(InvalidClaims);
@@ -1371,7 +1374,7 @@ conformanceCase(
 					dpopRequest: {
 						method: "GET",
 						url: `${fixture.server.origin}/api/resource`,
-						proof,
+						proofs: [proof],
 					},
 				}),
 			).rejects.toBeInstanceOf(DPoPBindingMismatch);

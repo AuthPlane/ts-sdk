@@ -3,6 +3,8 @@
 	"references": [
 		{ "path": "packages/sdk" },
 		{ "path": "packages/mcp" },
-		{ "path": "packages/fastmcp" }
+		{ "path": "packages/fastmcp" },
+		{ "path": "packages/hono" },
+		{ "path": "packages/nestjs" }
 	]
 }

@@ -393,7 +393,8 @@ export class AuthplaneResource {
 		const raw = claims.raw as Record<string, unknown>;
 		const cnf = raw.cnf;
 		const tokenIsBound = typeof cnf === "object" && cnf !== null;
-		const proofPresent = Boolean(dpopRequest?.proof);
+		const proof = dpopRequest?.proofs[0];
+		const proofPresent = proof !== undefined;
 
 		// Mode 3 — resource has not opted into DPoP. Reject any DPoP signal
 		// upfront rather than fall back to bearer (which would silently drop
@@ -437,7 +438,7 @@ export class AuthplaneResource {
 				"Access token is DPoP-bound (`cnf.jkt` present) but no DPoP request context was provided",
 			);
 		}
-		if (!dpopRequest.proof) {
+		if (!proof) {
 			throw new DPoPProofMissing(
 				"Access token is DPoP-bound (`cnf.jkt` present) but no DPoP proof was supplied",
 			);
@@ -447,7 +448,7 @@ export class AuthplaneResource {
 		// reaches here: the constructor allocates it iff `inboundDPoP` is
 		// configured, and Mode 3 returns earlier in this function.
 		return await verifyDpopProof({
-			proof: dpopRequest.proof,
+			proof,
 			method: dpopRequest.method,
 			url: dpopRequest.url,
 			accessToken: rawToken,

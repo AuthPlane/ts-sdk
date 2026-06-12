@@ -89,7 +89,7 @@ the authserver is not reachable.
 ### Manual end-to-end smoke
 
 `scripts/` contains helpers that boot a local authserver and run a smoke
-check end-to-end (mirrors the Python SDK's helpers):
+check end-to-end:
 
 ```bash
 # Start local authserver and register client / scopes / user.

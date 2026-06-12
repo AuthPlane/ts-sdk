@@ -5,8 +5,11 @@ import {
 	AuthplaneError,
 	type AuthplaneResource,
 	type AuthplaneResourceOptions,
+	buildDPoPRequestContext,
 	type DPoPProvider,
 	type DPoPRequestContext,
+	extractBearerToken,
+	extractDpopHeaderValues,
 	type FetchSettings,
 	InsufficientScope,
 	type ProtectedResourceMetadata,
@@ -74,6 +77,14 @@ export interface AuthplaneFastMcpAuthOptions
 	 */
 	defaultTtlSeconds?: number;
 	/**
+	 * Maximum number of entries kept in the outbound token cache before
+	 * least-recently-used eviction kicks in. Default `10_000`. Override on
+	 * hosts with very high subject-token cardinality — token-exchange cache
+	 * keys include the subject token, so this is the bound that actually
+	 * limits memory growth.
+	 */
+	cacheMaxEntries?: number;
+	/**
 	 * Number of consecutive transient AS failures before the circuit breaker
 	 * opens. Default `5`.
 	 */
@@ -103,45 +114,55 @@ function deriveResource(baseUrl: string, mcpPath: string): string {
 	return `${base}/${path}`;
 }
 
-function getBearerToken(request: IncomingMessage): string | undefined {
+/**
+ * Pull the access token off the inbound `Authorization` header and run it
+ * through the core `extractBearerToken` helper. `Authorization` is in
+ * Node's fixed de-dup-to-last-value allowlist (alongside `host`,
+ * `content-type`, etc.), so `request.headers.authorization` is
+ * `string | undefined` on real wire traffic — never an array. The
+ * `Array.isArray` guard is defense against the `string[]` shape that
+ * only arrives from `request.rawHeaders` or hand-built fixtures; we
+ * collapse it to `undefined` so the core helper raises `TokenMissing`
+ * instead of accepting a hand-crafted multi-value bag. Returns
+ * `undefined` (rather than throwing) for the call site that branches
+ * on absence; the caller funnels that into `TokenMissing` so the
+ * response shape is unchanged.
+ */
+function readBearerToken(request: IncomingMessage): string | undefined {
 	const authHeader = request.headers.authorization;
-	if (!authHeader || Array.isArray(authHeader)) {
+	const headerValue = Array.isArray(authHeader) ? undefined : authHeader;
+	if (!headerValue) {
 		return undefined;
 	}
-	const trimmed = authHeader.trim();
-	const lower = trimmed.toLowerCase();
-
-	const bearerPrefix = "bearer ";
-	if (lower.startsWith(bearerPrefix)) {
-		return trimmed.slice(bearerPrefix.length).trim();
+	try {
+		return extractBearerToken(headerValue);
+	} catch {
+		return undefined;
 	}
-
-	const dpopPrefix = "dpop ";
-	if (lower.startsWith(dpopPrefix)) {
-		return trimmed.slice(dpopPrefix.length).trim();
-	}
-
-	return undefined;
 }
 
-function getDpopProof(request: IncomingMessage): string | undefined {
-	// `IncomingMessage.headers` lowercases keys in Node, but FastMCP may wrap/transform.
-	// Do a case-insensitive scan to reliably find `DPoP`.
+function collectDpopHeaderValues(
+	request: IncomingMessage,
+): readonly string[] {
+	// `IncomingMessage.headers` lowercases keys in Node, but FastMCP may
+	// wrap/transform. Scan case-insensitively and normalise to
+	// `string | string[] | undefined` for the shared core helper, which
+	// hands the result to the factory enforcing RFC 9449 §4.3 #1.
 	const headers = request.headers;
 	for (const [key, value] of Object.entries(headers)) {
 		if (key.toLowerCase() !== "dpop") continue;
-		if (typeof value === "string" && value.length > 0) return value;
+		return extractDpopHeaderValues(value);
 	}
-	return undefined;
+	return [];
 }
 
-function buildDpopRequestContext(
+function buildFastMcpDpopRequestContext(
 	request: IncomingMessage,
 	resourceOrigin: string,
 	resourceDefaultPath: string,
 ): DPoPRequestContext | undefined {
-	const proof = getDpopProof(request);
-	if (proof === undefined) {
+	const dpopHeaderValues = collectDpopHeaderValues(request);
+	if (dpopHeaderValues.length === 0) {
 		return undefined;
 	}
 
@@ -155,11 +176,11 @@ function buildDpopRequestContext(
 	const pathAndQuery = request.url ?? resourceDefaultPath;
 	const url = `${resourceOrigin}${pathAndQuery}`;
 
-	return {
+	return buildDPoPRequestContext({
 		method: (request.method ?? "POST").toUpperCase(),
 		url,
-		proof,
-	};
+		dpopHeaderValues,
+	});
 }
 
 export async function authplaneFastMcpAuth(
@@ -192,6 +213,7 @@ export async function authplaneFastMcpAuth(
 		metadataRefreshSeconds: verifierOptions.metadataRefreshSeconds,
 		cacheTtlBufferSeconds: options.cacheTtlBufferSeconds,
 		defaultTtlSeconds: options.defaultTtlSeconds,
+		cacheMaxEntries: options.cacheMaxEntries,
 		circuitBreakerThreshold: options.circuitBreakerThreshold,
 		circuitBreakerCooldownSeconds: options.circuitBreakerCooldownSeconds,
 		dpopProvider: options.dpopProvider,
@@ -263,7 +285,7 @@ export async function authplaneFastMcpAuth(
 	const authenticate: NonNullable<
 		ServerOptions<AuthplaneFastMcpSession>["authenticate"]
 	> = async (request) => {
-		const token = getBearerToken(request);
+		const token = readBearerToken(request);
 		if (!token) {
 			throw challengeResponse(
 				new TokenMissing("Missing or invalid Authorization header"),
@@ -276,7 +298,7 @@ export async function authplaneFastMcpAuth(
 			_authenticateRequestContext.enterWith(store);
 		}
 		if (store.promise === undefined) {
-			const dpopContext = buildDpopRequestContext(
+			const dpopContext = buildFastMcpDpopRequestContext(
 				request,
 				resourceOrigin,
 				resourceDefaultPath,

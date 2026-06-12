@@ -84,6 +84,35 @@ describe("AuthplaneTokenVerifier", () => {
     );
   });
 
+  it("throws InvalidClaims when audience is not a valid URL", async () => {
+    // The OAuth `aud` claim is just a string — non-URL values are spec-legal
+    // even though RFC 8707 resource indicators are URIs in practice. A
+    // malformed audience must surface as 401 (token-validity), not 500.
+    const claims = new VerifiedClaims({
+      sub: "user_123",
+      clientId: "client_456",
+      scopes: ["tools/add"],
+      issuer: "https://auth.example.com",
+      audience: ["not a url"],
+      expiresAt: 1700000000,
+      issuedAt: 1699999000,
+      jti: "token_123",
+      kid: "key_1",
+      agentId: "",
+      agentChain: [],
+      notBefore: 0,
+      raw: { sub: "user_123" },
+    });
+    const verifier = {
+      verify: vi.fn(async () => claims),
+    } as unknown as AuthplaneResource;
+    const adapter = new AuthplaneTokenVerifier(verifier);
+
+    await expect(adapter.verifyAccessToken("token")).rejects.toThrow(
+      new InvalidClaims("Token audience is not a valid URL"),
+    );
+  });
+
   it("rethrows non-authplane verifier errors", async () => {
     const verifier = {
       verify: vi.fn(async () => {

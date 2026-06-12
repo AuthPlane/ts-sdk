@@ -748,7 +748,7 @@ describe("AuthplaneResource with DPoP-bound tokens", () => {
       const dpopRequest = {
         method: dpopMethod,
         url: dpopUrl,
-        proof: headers.DPoP,
+        proofs: [headers.DPoP],
       };
 
       const claims = await resource.verify(token, { dpopRequest });
@@ -823,7 +823,7 @@ describe("AuthplaneResource with DPoP-bound tokens", () => {
           dpopRequest: {
             method: dpopMethod,
             url: dpopUrl,
-            proof: headers.DPoP,
+            proofs: [headers.DPoP],
           },
         }),
       ).rejects.toBeInstanceOf(DPoPBindingMismatch);

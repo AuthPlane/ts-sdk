@@ -174,6 +174,46 @@ describe("authplaneFastMcpAuth", () => {
     );
   });
 
+  it("forwards cache tunables (cacheTtlBufferSeconds, defaultTtlSeconds, cacheMaxEntries) to AuthplaneClient.create()", async () => {
+    const mockResource = {
+      verify: vi.fn(),
+      prmResponse: vi.fn(() => ({
+        resource: "https://api.example.com/mcp",
+        authorization_servers: ["https://auth.example.com"],
+        scopes_supported: [],
+        bearer_methods_supported: ["header"],
+      })),
+      prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+    } as unknown as AuthplaneResource;
+
+    const mockClient = {
+      resource: vi.fn(() => mockResource),
+      exchange: vi.fn(),
+    } as unknown as AuthplaneClient;
+
+    const createSpy = vi
+      .spyOn(AuthplaneClient, "create")
+      .mockResolvedValue(mockClient);
+
+    await authplaneFastMcpAuth({
+      issuer: "https://auth.example.com",
+      resource: "https://api.example.com/mcp",
+      cacheTtlBufferSeconds: 45,
+      defaultTtlSeconds: 1800,
+      cacheMaxEntries: 256,
+    });
+
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cacheTtlBufferSeconds: 45,
+        defaultTtlSeconds: 1800,
+        cacheMaxEntries: 256,
+      }),
+    );
+  });
+
   it("throws when neither resource nor baseUrl is provided", async () => {
     await expect(
       authplaneFastMcpAuth({
@@ -463,11 +503,11 @@ describe("authplaneFastMcpAuth", () => {
     expect(verify).toHaveBeenCalledWith(
       "access_token",
       expect.objectContaining({
-        dpopRequest: {
+        dpopRequest: expect.objectContaining({
           method: "POST",
           url: "https://api.example.com/mcp",
-          proof: "dpop_proof_jwt",
-        },
+          proofs: ["dpop_proof_jwt"],
+        }),
       }),
     );
   });

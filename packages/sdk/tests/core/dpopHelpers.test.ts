@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { calculateJwkThumbprint, exportJWK, generateKeyPair, SignJWT } from "jose";
 
 import {
+  buildDPoPRequestContext,
   InMemoryDPoPNonceStore,
   InMemoryDPoPReplayStore,
   requireDpopProof,
@@ -14,6 +15,7 @@ import {
   DPoPProofMissing,
   DPoPReplayDetected,
   InvalidDPoPProof,
+  MultipleDPoPProofs,
 } from "../../src/core/errors.js";
 
 function sha256Base64Url(value: string): string {
@@ -26,12 +28,13 @@ function sha256Base64Url(value: string): string {
 }
 
 describe("dpop helpers", () => {
-  it("requires proof when ctx.proof is missing", () => {
+  it("requires proof when the context has no proofs", () => {
     expect(() => requireDpopProof(undefined)).toThrow(DPoPProofMissing);
     expect(() =>
       requireDpopProof({
         method: "GET",
         url: "https://example.com",
+        proofs: [],
       }),
     ).toThrow(DPoPProofMissing);
 
@@ -39,9 +42,61 @@ describe("dpop helpers", () => {
       requireDpopProof({
         method: "GET",
         url: "https://example.com",
-        proof: "proof_1",
+        proofs: ["proof_1"],
       }),
     ).toBe("proof_1");
+  });
+
+  describe("buildDPoPRequestContext", () => {
+    const base = {
+      method: "POST",
+      url: "https://api.example.com/mcp",
+    };
+
+    it("returns an empty proofs array when no DPoP header was supplied", () => {
+      expect(
+        buildDPoPRequestContext({ ...base, dpopHeaderValues: [] }).proofs,
+      ).toEqual([]);
+    });
+
+    it("filters whitespace-only entries", () => {
+      expect(
+        buildDPoPRequestContext({
+          ...base,
+          dpopHeaderValues: ["", "   ", "  proof  "],
+        }).proofs,
+      ).toEqual(["proof"]);
+    });
+
+    it("throws MultipleDPoPProofs when more than one non-blank value is present", () => {
+      expect(() =>
+        buildDPoPRequestContext({
+          ...base,
+          dpopHeaderValues: ["eyJ.a", "eyJ.b"],
+        }),
+      ).toThrow(MultipleDPoPProofs);
+    });
+
+    it("throws MultipleDPoPProofs when a single value is comma-merged (RFC 9449 §4.3 detection)", () => {
+      // JWS compact serialisation never contains a literal `,`, so a comma
+      // in the inbound `DPoP` header value can only originate from an
+      // intermediary collapsing duplicate same-name headers — the very
+      // shape §4.3 #1 requires us to reject.
+      expect(() =>
+        buildDPoPRequestContext({
+          ...base,
+          dpopHeaderValues: ["eyJ.a, eyJ.b"],
+        }),
+      ).toThrow(MultipleDPoPProofs);
+    });
+
+    it("freezes the returned proofs array", () => {
+      const ctx = buildDPoPRequestContext({
+        ...base,
+        dpopHeaderValues: ["only-one"],
+      });
+      expect(Object.isFrozen(ctx.proofs)).toBe(true);
+    });
   });
 
   it("InMemoryDPoPNonceStore evicts oldest entries past maxEntries", () => {
