@@ -6,6 +6,11 @@ on:
     branches:
       - main
 
+# Least privilege: CI only reads source to lint, test, and build. No job
+# needs to write to the repo, so the whole workflow runs read-only.
+permissions:
+  contents: read
+
 jobs:
   quality:
     runs-on: ubuntu-latest

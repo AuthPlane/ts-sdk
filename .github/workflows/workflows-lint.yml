@@ -26,11 +26,15 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       # Pulls the matching actionlint binary release from GitHub Releases
-      # via the upstream download script, version-pinned in the URL. This
-      # is a lint-only path with no secrets / no publish surface, so the
-      # supply-chain risk of a raw.githubusercontent.com fetch is bounded
-      # to "the lint job lies about workflow validity" — bump the version
-      # deliberately rather than tracking a moving tag.
+      # via the upstream download script. The script is fetched by commit
+      # SHA (not a mutable tag) and sha256-verified before it runs — this
+      # closes Scorecard's "downloadThenRun not pinned by hash" gap. The
+      # script then checksum-verifies the actionlint binary it pulls from
+      # the matching release.
+      #
+      # To bump: change ACTIONLINT_VERSION, set ACTIONLINT_SCRIPT_SHA to the
+      # commit the new tag points at (`gh api repos/rhysd/actionlint/commits/vX.Y.Z -q .sha`),
+      # and update ACTIONLINT_SCRIPT_SHA256 to that file's sha256.
       #
       # Install dir is passed explicitly as the script's second positional
       # arg so the workflow doesn't couple to the script's internal default
@@ -39,11 +43,16 @@ jobs:
       - name: Install actionlint
         env:
           ACTIONLINT_VERSION: "1.7.7"
+          ACTIONLINT_SCRIPT_SHA: "03d0035246f3e81f36aed592ffb4bebf33a03106"
+          ACTIONLINT_SCRIPT_SHA256: "221d1d16c03e4e4fcd867de34104e8d479bdce20ccdfa553b9a5c0dc29bf6af2"
           ACTIONLINT_INSTALL_DIR: ${{ runner.temp }}/actionlint
         run: |
           mkdir -p "${ACTIONLINT_INSTALL_DIR}"
-          bash <(curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash") \
-            "${ACTIONLINT_VERSION}" "${ACTIONLINT_INSTALL_DIR}"
+          script="${ACTIONLINT_INSTALL_DIR}/download-actionlint.bash"
+          curl -fsSL -o "${script}" \
+            "https://raw.githubusercontent.com/rhysd/actionlint/${ACTIONLINT_SCRIPT_SHA}/scripts/download-actionlint.bash"
+          echo "${ACTIONLINT_SCRIPT_SHA256}  ${script}" | sha256sum -c -
+          bash "${script}" "${ACTIONLINT_VERSION}" "${ACTIONLINT_INSTALL_DIR}"
           echo "${ACTIONLINT_INSTALL_DIR}" >> "${GITHUB_PATH}"
           "${ACTIONLINT_INSTALL_DIR}/actionlint" -version
 
