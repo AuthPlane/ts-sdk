@@ -42,6 +42,12 @@ on:
         required: false
         type: string
 
+# Least privilege default; the cut job below grants the contents:write
+# and pull-requests:write it needs to push the release branch and open
+# the next-dev bump PR.
+permissions:
+  contents: read
+
 concurrency:
   group: cut-release
   cancel-in-progress: false

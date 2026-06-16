@@ -27,6 +27,12 @@ on:
         type: string
         default: ""
 
+# Least privilege default; the backport job below grants the
+# contents:write and pull-requests:write it needs to push the branch
+# and open the PR.
+permissions:
+  contents: read
+
 concurrency:
   group: backport-${{ inputs.fromBranch }}-to-${{ inputs.toBranch }}
   cancel-in-progress: false

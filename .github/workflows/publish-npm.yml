@@ -23,6 +23,11 @@ on:
       - "v*.*.*"
   workflow_dispatch:
 
+# Least privilege default; the publish job below grants the id-token:write
+# it needs for npm provenance (OIDC), keeping contents read-only.
+permissions:
+  contents: read
+
 # Shared with `workflow_dispatch` retries against the same tag — see
 # RELEASE_GUIDE.md → Troubleshooting → "Re-running the publish workflow
 # against a tag" → "Shared concurrency group with the original tag-push

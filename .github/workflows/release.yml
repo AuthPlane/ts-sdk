@@ -33,6 +33,12 @@ on:
         type: boolean
         default: false
 
+# Least privilege default; the release job below grants the contents:write
+# it needs to commit the version bump, push the branch, and create the tag
+# and GitHub Release.
+permissions:
+  contents: read
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
