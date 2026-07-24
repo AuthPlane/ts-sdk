@@ -1,6 +1,6 @@
 {
 	"name": "@authplane/nestjs",
-	"version": "0.3.0-rc.0",
+	"version": "0.3.0",
 	"description": "Authplane JWT validation adapter for the NestJS framework",
 	"keywords": [
 		"nestjs",
@@ -49,14 +49,14 @@
 		"test:integration": "vitest run tests/integration/auth.integration.test.ts"
 	},
 	"peerDependencies": {
-		"@authplane/sdk": "^0.3.0-rc.0",
+		"@authplane/sdk": "^0.3.0",
 		"@nestjs/common": "^10.0.0",
 		"@nestjs/core": "^10.0.0",
 		"reflect-metadata": "^0.2.0",
 		"rxjs": "^7.0.0"
 	},
 	"devDependencies": {
-		"@authplane/sdk": "^0.3.0-rc.0",
+		"@authplane/sdk": "^0.3.0",
 		"@nestjs/common": "^10.4.0",
 		"@nestjs/core": "^10.4.0",
 		"@nestjs/platform-express": "^10.4.0",

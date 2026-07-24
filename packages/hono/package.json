@@ -1,6 +1,6 @@
 {
 	"name": "@authplane/hono",
-	"version": "0.3.0-rc.0",
+	"version": "0.3.0",
 	"description": "Authplane JWT validation adapter for the Hono web framework",
 	"keywords": [
 		"hono",
@@ -49,11 +49,11 @@
 		"test:integration": "vitest run tests/auth.integration.test.ts"
 	},
 	"peerDependencies": {
-		"@authplane/sdk": "^0.3.0-rc.0",
+		"@authplane/sdk": "^0.3.0",
 		"hono": "^4.12.21"
 	},
 	"devDependencies": {
-		"@authplane/sdk": "^0.3.0-rc.0",
+		"@authplane/sdk": "^0.3.0",
 		"@hono/node-server": "^1.14.0",
 		"@types/node": "^24.3.0",
 		"@vitest/coverage-v8": "4.1.5",
