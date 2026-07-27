@@ -14,6 +14,8 @@ on:
       - "packages/sdk/package.json"
       - "packages/mcp/package.json"
       - "packages/fastmcp/package.json"
+      - "packages/hono/package.json"
+      - "packages/nestjs/package.json"
       - ".github/workflows/security.yml"
   push:
     branches:
@@ -24,6 +26,8 @@ on:
       - "packages/sdk/package.json"
       - "packages/mcp/package.json"
       - "packages/fastmcp/package.json"
+      - "packages/hono/package.json"
+      - "packages/nestjs/package.json"
       - ".github/workflows/security.yml"
   schedule:
     # Mondays 06:00 UTC — after dependabot runs.
