@@ -55,13 +55,19 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.ref }}
 
-      # No registry-url here: actions/setup-node would otherwise write a
-      # `_authToken=${NODE_AUTH_TOKEN}` line into ~/.npmrc, which under the
-      # Trusted Publisher flow (no NODE_AUTH_TOKEN exported) expands to an
-      # empty token. npm tolerates this today but the behaviour is implicit
-      # and version-dependent. Letting npm use its default registry keeps
-      # .npmrc untouched; the @authplane/* packages publish to npmjs.org
-      # via npm's defaults.
+      # registry-url IS required for OIDC Trusted Publishing to engage.
+      # setup-node writes a `//registry.npmjs.org/:_authToken=...` entry
+      # into .npmrc, and that scoped-registry auth config is the signal
+      # the npm CLI keys off to exchange the GitHub id-token for a
+      # short-lived publish credential against that registry. Omitting it
+      # (as an earlier revision did, to avoid an "empty token" in .npmrc)
+      # is exactly why npm never attempted the OIDC handshake and both the
+      # `0.2.0` and `0.3.0` tags died with `ENEEDAUTH` — npm fell straight
+      # through to demanding a classic credential. Under the Trusted
+      # Publisher flow no NODE_AUTH_TOKEN is exported, so the templated
+      # `${NODE_AUTH_TOKEN}` resolves empty; npm's OIDC exchange overrides
+      # it. This matches npm's own canonical GitHub Actions example, which
+      # includes registry-url in precisely this token-less scenario.
       #
       # Node 24 LTS bundles npm 11.x, which is the floor for OIDC Trusted
       # Publishing (npm 11.5.1+). Node 22 LTS bundles npm 10.9.x, which
@@ -76,6 +82,7 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
+          registry-url: 'https://registry.npmjs.org'
           cache: npm
 
       - name: Derive version from tag
