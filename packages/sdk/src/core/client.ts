@@ -16,6 +16,7 @@ import { CircuitBreaker } from "./circuitBreaker.js";
 import { shouldTripCircuit } from "./circuitPolicy.js";
 import type { ASCredentials } from "./credentials.js";
 import type { DPoPProvider } from "./dpop.js";
+import { assertHttpIdentifier } from "./identifiers.js";
 import {
 	JWKSCache,
 	type JwksDocument,
@@ -83,7 +84,10 @@ export class AuthplaneClient {
 		dpopProvider?: DPoPProvider | undefined;
 	}): Promise<AuthplaneClient> {
 		const client = new AuthplaneClient();
-		client.issuer = options.issuer.replace(/\/+$/g, "");
+		// RFC 8414 §3.3 — the issuer is an opaque identifier compared with
+		// simple string equality (against metadata and token `iss`); it is
+		// validated but never rewritten.
+		client.issuer = assertHttpIdentifier(options.issuer, "issuer");
 		client.authProvider = toAuthProvider(options.auth);
 
 		const resolvedDevMode = options.devMode ?? false;

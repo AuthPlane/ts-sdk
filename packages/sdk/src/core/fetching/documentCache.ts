@@ -243,7 +243,7 @@ export class MetadataCache extends DocumentCache<Record<string, unknown>> {
 			...config,
 		});
 
-		this.expectedIssuer = (options.expectedIssuer ?? "").replace(/\/+$/g, "");
+		this.expectedIssuer = options.expectedIssuer ?? "";
 		this.allowHttp = options.allowHttp ?? false;
 	}
 
@@ -271,14 +271,14 @@ export class MetadataCache extends DocumentCache<Record<string, unknown>> {
 	private validateMetadata(
 		metadata: Record<string, unknown>,
 	): Record<string, unknown> {
-		const rawIssuer =
-			typeof metadata.issuer === "string" ? metadata.issuer : "";
-		const issuer = rawIssuer.replace(/\/+$/g, "");
+		const issuer = typeof metadata.issuer === "string" ? metadata.issuer : "";
 		if (!issuer) {
 			throw new MetadataFetchError(
 				"AS metadata missing required 'issuer' field.",
 			);
 		}
+		// RFC 8414 §3.3 — the returned issuer MUST be identical to the
+		// configured one; simple string comparison, no normalisation.
 		if (this.expectedIssuer && issuer !== this.expectedIssuer) {
 			throw new MetadataFetchError(
 				`AS metadata issuer mismatch: expected '${this.expectedIssuer}', got '${issuer}'.`,

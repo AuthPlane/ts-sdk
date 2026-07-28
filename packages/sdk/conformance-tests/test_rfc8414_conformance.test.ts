@@ -45,6 +45,25 @@ conformanceCase(
 		} finally {
 			await server.close();
 		}
+
+		// Variant: RFC 8414 §3.3 requires the returned issuer to be identical
+		// to the configured one — a trailing-slash difference is equivalent
+		// per RFC 3986 §6.2.3 but not identical, so it MUST be rejected.
+		const slashKeypair = await generateEs256Keypair();
+		const slashServer = await createMockAsServer({
+			keypair: slashKeypair,
+			issuerSuffix: "/",
+		});
+		try {
+			await expect(
+				AuthplaneClient.create({
+					issuer: slashServer.origin,
+					fetchSettings: NO_SSRF,
+				}),
+			).rejects.toThrow(/issuer mismatch/);
+		} finally {
+			await slashServer.close();
+		}
 	},
 );
 
@@ -358,6 +377,10 @@ conformanceCase(
 			[
 				"https://api.example.com/v2/mcp",
 				"/.well-known/oauth-protected-resource/v2/mcp",
+			],
+			[
+				"https://api.example.com/mcp/",
+				"/.well-known/oauth-protected-resource/mcp/",
 			],
 		];
 		for (const [resource, expectedPath] of cases) {

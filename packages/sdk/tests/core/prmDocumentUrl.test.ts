@@ -13,10 +13,10 @@ describe("oauthProtectedResourceMetadataDocumentUrl (RFC 9728 §3.1)", () => {
 		);
 	});
 
-	it("uses empty suffix when resource path is /", () => {
+	it("preserves a bare / resource path (RFC 9728 §3 insertion)", () => {
 		expect(
 			oauthProtectedResourceMetadataDocumentUrl("https://rs.example.com/"),
-		).toBe("https://rs.example.com/.well-known/oauth-protected-resource");
+		).toBe("https://rs.example.com/.well-known/oauth-protected-resource/");
 	});
 
 	it("preserves nested resource paths", () => {
@@ -29,11 +29,11 @@ describe("oauthProtectedResourceMetadataDocumentUrl (RFC 9728 §3.1)", () => {
 		);
 	});
 
-	it("strips trailing slashes on the resource path", () => {
+	it("preserves a trailing slash on the resource path", () => {
 		expect(
 			oauthProtectedResourceMetadataDocumentUrl("https://rs.example.com/mcp/"),
 		).toBe(
-			"https://rs.example.com/.well-known/oauth-protected-resource/mcp",
+			"https://rs.example.com/.well-known/oauth-protected-resource/mcp/",
 		);
 	});
 
@@ -51,9 +51,9 @@ describe("oauthProtectedResourceMetadataPath (RFC 9728 §3.1, path only)", () =>
 		);
 	});
 
-	it("returns the bare .well-known path when the resource path is /", () => {
+	it("preserves a bare / resource path (RFC 9728 §3 insertion)", () => {
 		expect(oauthProtectedResourceMetadataPath("https://rs.example.com/")).toBe(
-			"/.well-known/oauth-protected-resource",
+			"/.well-known/oauth-protected-resource/",
 		);
 	});
 
@@ -63,10 +63,10 @@ describe("oauthProtectedResourceMetadataPath (RFC 9728 §3.1, path only)", () =>
 		).toBe("/.well-known/oauth-protected-resource/mcp");
 	});
 
-	it("strips a trailing slash on the resource path", () => {
+	it("preserves a trailing slash on the resource path", () => {
 		expect(
 			oauthProtectedResourceMetadataPath("https://rs.example.com/mcp/"),
-		).toBe("/.well-known/oauth-protected-resource/mcp");
+		).toBe("/.well-known/oauth-protected-resource/mcp/");
 	});
 
 	it("preserves nested paths", () => {

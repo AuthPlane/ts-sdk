@@ -93,6 +93,37 @@ conformanceCase(
 		} finally {
 			await fixture.close();
 		}
+
+		// Variant: a token whose `iss` is identical to a configured
+		// trailing-slash issuer MUST verify — the issuer is never rewritten,
+		// end to end: RFC 8414 metadata is discovered at the trailing-slash
+		// well-known URL, the advertised issuer matches exactly, and the
+		// token's `iss` matches exactly.
+		const keypair = await generateEs256Keypair();
+		const server = await createMockAsServer({
+			keypair,
+			issuerSuffix: "/",
+			metadataPath: "/.well-known/oauth-authorization-server/",
+		});
+		try {
+			const client = await AuthplaneClient.create({
+				issuer: `${server.origin}/`,
+				fetchSettings: NO_SSRF,
+			});
+			const resource = client.resource({
+				resource: `${server.origin}/api`,
+				scopes: ["read:data"],
+			});
+			const tokenFactory = createTokenFactory(keypair);
+			const token = await tokenFactory({
+				iss: `${server.origin}/`,
+				aud: `${server.origin}/api`,
+			});
+			const claims = await resource.verify(token);
+			expect(claims.sub).toBe("user123");
+		} finally {
+			await server.close();
+		}
 	},
 );
 

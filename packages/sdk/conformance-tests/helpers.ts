@@ -108,6 +108,16 @@ export interface MockAsServerHandle {
 export interface MockAsServerOptions {
 	keypair: Es256Keypair;
 	metadataOverrides?: Record<string, unknown>;
+	/**
+	 * Suffix appended to the server origin to form the advertised issuer
+	 * (e.g. "/" to simulate an AS whose issuer identifier ends in a slash).
+	 */
+	issuerSuffix?: string;
+	/**
+	 * Path the metadata document is served at. Defaults to the RFC 8414
+	 * well-known path for an issuer with no path component.
+	 */
+	metadataPath?: string;
 	includeTokenEndpoint?: boolean;
 	includeIntrospectionEndpoint?: boolean;
 	includeRevocationEndpoint?: boolean;
@@ -162,7 +172,7 @@ export async function createMockAsServer(
 	const origin = `http://127.0.0.1:${addr.port}`;
 
 	const baseMetadata: Record<string, unknown> = {
-		issuer: origin,
+		issuer: `${origin}${options.issuerSuffix ?? ""}`,
 		jwks_uri: `${origin}/.well-known/jwks.json`,
 	};
 	if (options.includeTokenEndpoint !== false) {
@@ -179,7 +189,9 @@ export async function createMockAsServer(
 		...(options.metadataOverrides ?? {}),
 	};
 
-	const metadataUrl = `${origin}/.well-known/oauth-authorization-server`;
+	const metadataPath =
+		options.metadataPath ?? "/.well-known/oauth-authorization-server";
+	const metadataUrl = `${origin}${metadataPath}`;
 	const jwksUrl =
 		typeof metadata.jwks_uri === "string"
 			? metadata.jwks_uri
@@ -202,10 +214,7 @@ export async function createMockAsServer(
 	server.on("request", async (req, res) => {
 		try {
 			const url = req.url ?? "";
-			if (
-				req.method === "GET" &&
-				url === "/.well-known/oauth-authorization-server"
-			) {
+			if (req.method === "GET" && url === metadataPath) {
 				sendJson(res, 200, metadata);
 				return;
 			}

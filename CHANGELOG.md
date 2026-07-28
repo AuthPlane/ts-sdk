@@ -16,12 +16,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
-- `@authplane/sdk` — `oauthProtectedResourceMetadataDocumentUrl(resource)` now normalises trailing slashes (RFC 9728 §3.1) and throws a typed `TypeError` on invalid URLs. **Migration**: drop any deliberate trailing slash from `resource` before upgrading — the canonical form is no-trailing-slash.
+- `@authplane/sdk` — resource and issuer identifiers are never rewritten (RFC 8414 §3.3 / RFC 9728 §3.3 require the advertised value to be *identical* to the configured one). `oauthProtectedResourceMetadataDocumentUrl` / `oauthProtectedResourceMetadataPath` and the RFC 8414 metadata URL are formed by pure insertion, preserving the identifier's path exactly — including any trailing slash — and AS-metadata issuer comparison is now an exact string match. Identifiers are validated at construction (absolute http(s) URL with an authority and no fragment) and throw a typed `TypeError` otherwise; trailing slashes, host case, and explicit ports are legal and preserved. **Migration**: if your configured issuer or resource differs from your authorization server's actual identifier by a trailing slash, correct the config — the SDK no longer silently reconciles them.
 - `@authplane/mcp` — now accepts a DPoP-bound token presented under the `DPoP` scheme (RFC 9449 §7.1) instead of rejecting it with 401.
 - `@authplane/fastmcp` — stricter RFC 6750 §2.1 `Authorization` parsing, consistent with the other adapters.
 
 ### Fixed
 
+- `@authplane/sdk` — a configured issuer whose identifier legitimately ends in `/` no longer has every token rejected. The trailing slash was silently stripped at client creation and the stripped value compared against the token's `iss`, which RFC 9068 requires to carry the slash; discovery now also resolves the RFC 8414 well-known URL for such issuers correctly.
 - `@authplane/mcp` — a non-URL `aud` claim now returns 401 `invalid_token` (RFC 8707) instead of a 500.
 
 ## [0.2.0] - 2026-05-22

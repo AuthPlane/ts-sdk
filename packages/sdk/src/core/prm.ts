@@ -1,4 +1,5 @@
 import { ALLOWED_ALGORITHMS } from "./constants.js";
+import { assertHttpIdentifier, splitHttpIdentifier } from "./identifiers.js";
 
 export interface ProtectedResourceMetadata {
 	resource: string;
@@ -70,34 +71,21 @@ export function buildPrm(
 	return doc;
 }
 
-function parseResourceUrl(resource: string): URL {
-	try {
-		return new URL(resource);
-	} catch (cause) {
-		throw new TypeError(
-			`resource is not a valid URL (got ${JSON.stringify(resource)})`,
-			{ cause },
-		);
-	}
-}
-
-function resourceMetadataSuffix(parsed: URL): string {
-	return parsed.pathname.replace(/\/+$/u, "");
-}
-
 /**
  * RFC 9728 §3.1 — absolute URL of the Protected Resource Metadata document for `resource`.
  *
- * Path template: `/.well-known/oauth-protected-resource{resource-path}`.
- * Trailing slashes on the resource path are dropped so
- * `https://api.example.com/mcp/` and `https://api.example.com/mcp` yield the
- * same document URL.
+ * Formed by inserting `/.well-known/oauth-protected-resource` between the
+ * authority and path of the resource identifier (RFC 9728 §3) — a pure string
+ * insertion that preserves the path exactly, so `https://api.example.com/mcp/`
+ * and `https://api.example.com/mcp` yield distinct document URLs.
  */
 export function oauthProtectedResourceMetadataDocumentUrl(
 	resource: string,
 ): string {
-	const parsed = parseResourceUrl(resource);
-	return `${parsed.origin}/.well-known/oauth-protected-resource${resourceMetadataSuffix(parsed)}`;
+	const { base, path } = splitHttpIdentifier(
+		assertHttpIdentifier(resource, "resource"),
+	);
+	return `${base}/.well-known/oauth-protected-resource${path}`;
 }
 
 /**
@@ -109,6 +97,8 @@ export function oauthProtectedResourceMetadataDocumentUrl(
  * @throws TypeError when `resource` is not a valid absolute URL.
  */
 export function oauthProtectedResourceMetadataPath(resource: string): string {
-	const parsed = parseResourceUrl(resource);
-	return `/.well-known/oauth-protected-resource${resourceMetadataSuffix(parsed)}`;
+	const { path } = splitHttpIdentifier(
+		assertHttpIdentifier(resource, "resource"),
+	);
+	return `/.well-known/oauth-protected-resource${path}`;
 }

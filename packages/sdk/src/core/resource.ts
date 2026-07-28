@@ -10,6 +10,7 @@ import {
 } from "../auth/introspection.js";
 import { VerifiedClaims } from "./claims.js";
 import { ALLOWED_ALGORITHMS, CLOCK_SKEW_SECONDS } from "./constants.js";
+import { assertHttpIdentifier } from "./identifiers.js";
 import type { ASCredentials } from "./credentials.js";
 import {
 	type DPoPAlgorithm,
@@ -178,7 +179,10 @@ export class AuthplaneResource {
 		}
 
 		this.issuer = options.issuer;
-		this.resource = options.resource;
+		// RFC 8707 §2 — the resource identifier is opaque; validated for
+		// structure, never rewritten (it is compared verbatim against `aud`
+		// and advertised verbatim in PRM).
+		this.resource = assertHttpIdentifier(options.resource, "resource");
 		this.scopes = Object.freeze([...options.scopes]);
 		this.allowedAlgorithms = Object.freeze(allowedAlgorithms);
 		this.clockSkewSeconds = options.clockSkewSeconds ?? CLOCK_SKEW_SECONDS;
