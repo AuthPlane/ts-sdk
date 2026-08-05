@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-24
+
 ### Added
 
 - `@authplane/hono` — new Hono adapter: `authplaneHonoAuth()`, `bearerAuth` middleware (Bearer + DPoP, RFC 9449 §7.1), `requireScope` guard, and an RFC 9728 PRM handler.
