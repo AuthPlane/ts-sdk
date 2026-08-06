@@ -7,6 +7,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- `@authplane/sdk` — the configured issuer is stored and compared byte-for-byte instead of having its trailing slash stripped. An authorization server whose issuer identifier legitimately ends in `/` mints tokens whose `iss` carries that slash (RFC 9068); the SDK compared them against the stripped form and **rejected every otherwise-valid token**. The RFC 8414 §3.3 metadata comparison is likewise exact on both sides now — §4 specifies it code-point-for-code-point — so a document whose `issuer` differs from the configured one only by a trailing slash is a mismatch rather than something the SDK silently reconciles. Deriving the `.well-known` URL still drops the terminating slash (RFC 8414 §3.1); that is derivation, not identity, and is unchanged. **Migration:** if your configured issuer differs from your authorization server's actual identifier by a trailing slash, correct the config — the SDK no longer reconciles them.
+
 ## [0.3.0] - 2026-07-24
 
 ### Added
