@@ -106,7 +106,7 @@ conformanceCase(
 			try {
 				await client.introspect("tok");
 				const authHeader =
-					server.introspectionRequests[0]?.headers["authorization"];
+					server.introspectionRequests[0]?.headers.authorization;
 				expect(authHeader).toBeDefined();
 				expect(authHeader).toMatch(/^Basic /);
 				const decoded = Buffer.from(
@@ -473,7 +473,7 @@ conformanceCase(
 			});
 			const request = server.introspectionRequests.at(-1);
 			expect(request).toBeDefined();
-			expect(request?.headers["authorization"]).toBeUndefined();
+			expect(request?.headers.authorization).toBeUndefined();
 		} finally {
 			await server.close();
 		}
@@ -505,7 +505,7 @@ conformanceCase(
 			});
 			const request = server.introspectionRequests.at(-1);
 			expect(request).toBeDefined();
-			expect(request?.headers["authorization"]).toMatch(/^Basic /);
+			expect(request?.headers.authorization).toMatch(/^Basic /);
 		} finally {
 			await server.close();
 		}
@@ -615,11 +615,11 @@ conformanceCase(
 			},
 		});
 		try {
-			const stringResult = (await introspectToken({
+			const stringResult = await introspectToken({
 				introspectionEndpoint: `${server1.origin}/oauth/introspect`,
 				token: "raw-token",
 				fetchSettings: NO_SSRF,
-			})) as Record<string, unknown>;
+			});
 			expect(stringResult.active).toBe(true);
 			expect(stringResult.aud).toBe("https://api.example.com");
 		} finally {
@@ -637,11 +637,11 @@ conformanceCase(
 			},
 		});
 		try {
-			const arrayResult = (await introspectToken({
+			const arrayResult = await introspectToken({
 				introspectionEndpoint: `${server2.origin}/oauth/introspect`,
 				token: "raw-token",
 				fetchSettings: NO_SSRF,
-			})) as Record<string, unknown>;
+			});
 			expect(arrayResult.active).toBe(true);
 			expect(arrayResult.aud).toEqual([
 				"https://api.example.com",

@@ -1,11 +1,11 @@
-import { type AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import {
 	createServer,
 	type IncomingMessage,
 	type Server,
 	type ServerResponse,
 } from "node:http";
-import { Buffer } from "node:buffer";
+import type { Buffer } from "node:buffer";
 
 import { randomBytes, randomUUID } from "node:crypto";
 
@@ -29,10 +29,12 @@ export async function generateEs256Keypair(
 	kid = "test-key-1",
 ): Promise<Es256Keypair> {
 	const { privateKey, publicKey } = await generateKeyPair("ES256");
-	const publicJwk = (await exportJWK(publicKey)) as Record<string, unknown>;
-	publicJwk.kid = kid;
-	publicJwk.alg = "ES256";
-	publicJwk.use = "sig";
+	const publicJwk: Record<string, unknown> = {
+		...(await exportJWK(publicKey)),
+		kid,
+		alg: "ES256",
+		use: "sig",
+	};
 	return {
 		privateKey: privateKey as KeyLike,
 		publicJwk,
@@ -312,7 +314,11 @@ export async function createTestFixture(
 	const { FetchSettings } = await import("../src/auth/fetchSettings.js");
 
 	const keypair = options.keypair ?? (await generateEs256Keypair());
-	const { keypair: _, inboundDPoP, ...rest } = options as MockAsServerOptions & {
+	const {
+		keypair: _,
+		inboundDPoP,
+		...rest
+	} = options as MockAsServerOptions & {
 		inboundDPoP?: import("../src/core/dpop.js").InboundDPoPOptions;
 	};
 	const server = await createMockAsServer({ keypair, ...rest });

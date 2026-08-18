@@ -1,4 +1,4 @@
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 
@@ -94,6 +94,19 @@ conformanceCase(
 			await fixture.close();
 		}
 	},
+	{
+		level: "partial",
+		gaps: [
+			"The catalog's accept variant — a configured issuer ending in a " +
+				"trailing slash accepting a token whose iss carries the same slash " +
+				"— is not exercised. createTestFixture hard-wires the client to the " +
+				"mock AS origin, so the case needs a client built by hand against " +
+				"an AS whose metadata issuer also ends in the slash.",
+		],
+		note:
+			"Covers the wrong-issuer reject only. The accept side follows from the " +
+			"same byte-for-byte comparison the reject side exercises.",
+	},
 );
 
 conformanceCase(
@@ -119,7 +132,15 @@ conformanceCase(
 	"rfc9068-required-claims-must-be-enforced",
 	"RFC9068: required claims must be enforced",
 	async () => {
-		for (const missing of ["iss", "exp", "aud", "sub", "client_id", "iat", "jti"]) {
+		for (const missing of [
+			"iss",
+			"exp",
+			"aud",
+			"sub",
+			"client_id",
+			"iat",
+			"jti",
+		]) {
 			const fixture = await createTestFixture();
 			try {
 				const token = await fixture.tokenFactory({
@@ -539,10 +560,8 @@ async function runNonceRetryServer(nonceHeaderName: string): Promise<{
 			return;
 		}
 		lastNonceOnRequest = undefined;
-		let body = "";
-		req.on("data", (chunk: Buffer) => {
-			body += chunk.toString("utf-8");
-		});
+		// Drain the request so `end` fires; this handler never reads the body.
+		req.on("data", () => {});
 		req.on("end", () => {
 			res.statusCode = 200;
 			res.setHeader("content-type", "application/json");
@@ -1396,7 +1415,7 @@ conformanceCase(
 			"https://auth.example.com",
 			"https://api.example.com",
 			["read:data", "write:data"],
-		) as Record<string, unknown>;
+		);
 		expect(prm).toHaveProperty("resource");
 		expect(prm).toHaveProperty("authorization_servers");
 		expect(prm).toHaveProperty("bearer_methods_supported");
