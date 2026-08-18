@@ -110,7 +110,7 @@ The adapter produces:
 |---|---|---|
 | `client` | `AuthplaneClient` | The underlying client constructed by the adapter. Call `client.close()` on shutdown. |
 | `verifier` | `AuthplaneResource` | The resource primitive; call `verifier.verify(token)` directly if you need to bypass the middleware. |
-| `tokenVerifier` | `AuthplaneTokenVerifier` | MCP SDK `OAuthTokenVerifier` implementation — use it if you're wiring middleware manually with `requireBearerAuth({ verifier: tokenVerifier, requiredScopes: [...] })`. |
+| `tokenVerifier` | `AuthplaneTokenVerifier` | MCP SDK `OAuthTokenVerifier` implementation — use it if you're wiring middleware manually with `requireBearerAuth({ verifier: tokenVerifier, requiredScopes: [...], resourceMetadataUrl })`, or handing a verifier to another MCP host framework. Set `resourceMetadataUrl` — without it the stock middleware omits the `resource_metadata` hint from 401 challenges and clients can't start discovery. Failures surface as MCP SDK error classes; see [Error handling](#error-handling). |
 | `bearerAuth` | `RequestHandler` | Ready-to-use Express middleware. Verifies token, enforces scopes, attaches `req.auth`. |
 | `protectedResourceMetadataPath` | `string` | Express route path where the PRM should be served (e.g. `/.well-known/oauth-protected-resource/mcp`). |
 | `protectedResourceMetadata` | `ProtectedResourceMetadata` | The PRM JSON payload. |
@@ -314,6 +314,10 @@ const auth = await authplaneMcpAuth({
 
 ## Error handling
 
+There are two entry points into verification, and each has its own error contract. Pick the one that matches who owns the HTTP response.
+
+### `bearerAuth` — Authplane owns the response
+
 The adapter funnels every `AuthplaneError` (thrown by the underlying verifier and by the `bearerAuth` middleware's own checks) through `httpStatus(error)` + `wwwAuthenticate(error, { resourceMetadataUrl, scope })` from `@authplane/sdk/core`, so the wire-level mapping — Bearer vs DPoP scheme, 401 vs 403, the `DPoPNotSupported → Bearer` carve-out, header-value sanitisation — is defined once in the SDK and shared with `@authplane/fastmcp`.
 
 See [**`@authplane/sdk` user guide — HTTP status and WWW-Authenticate challenge**](../../sdk/docs/user-guide.md#http-status-and-www-authenticate-challenge) for the canonical table.
@@ -328,6 +332,24 @@ The middleware emits a JSON body alongside the `WWW-Authenticate` header:
 ```
 
 `resource_metadata="…"` is always included so clients can discover the AS; `scope="…"` is included when `requiredScopes` is configured. Non-Authplane errors fall through to a generic 500 (`error: "server_error"`).
+
+### `tokenVerifier` — a host framework owns the response
+
+`tokenVerifier.verifyAccessToken(token)` is the `OAuthTokenVerifier` seam. Hosts that consume it — the MCP SDK's `requireBearerAuth`, and framework integrations built on the same interface — classify failures strictly by `instanceof` against the MCP SDK's own error classes, so this method rethrows in that taxonomy:
+
+| Authplane error | Rethrown as | Host response |
+|---|---|---|
+| `InsufficientScope` | `InsufficientScopeError` | 403 `insufficient_scope` |
+| Any error `httpStatus()` maps to 401 — `TokenMissing`, `TokenExpired`, `InvalidSignature`, `InvalidClaims`, `TokenRevoked`, `InvalidGrant`, and every `DPoPError` | `InvalidTokenError` | 401 `invalid_token` + `WWW-Authenticate` (carrying `resource_metadata` when the host sets `resourceMetadataUrl`) |
+| `JWKSFetchError`, `MetadataFetchError`, `CircuitOpenError`, `VerifierRuntimeError` | `ServerError` | 500 `server_error` |
+
+The MCP SDK has no 503 branch, so core's transient 503 conditions map to 500 through this seam. The original `AuthplaneError` is preserved on `error.cause` for logging. 401/403 messages are stripped of characters that would break out of a `WWW-Authenticate` quoted string, because the SDK's own header builder does not sanitise them; the 500 message is always the generic `Authorization server temporarily unavailable`, because the SDK renders it verbatim to unauthenticated clients and core's 5xx messages can carry infrastructure detail — read `error.cause` for the specifics.
+
+Every DPoP failure surfaces under the `Bearer` scheme through this seam (`WWW-Authenticate: Bearer error="invalid_token"`); only `bearerAuth` can emit `DPoP`-scheme challenges.
+
+Because the classification is `instanceof`-based, `@modelcontextprotocol/sdk` is a **peer dependency** of this package: your application and the adapter must resolve to the same copy. A duplicated nested install would turn every 401 into a 500 and stall client discovery — if you see that symptom, run `npm ls @modelcontextprotocol/sdk`. On installers that don't auto-install peers (npm < 7, Yarn classic), add the SDK to your application's dependencies explicitly.
+
+`verifyAccessTokenWithDpop(token, dpopRequest?)` is the richer contract — it propagates raw `AuthplaneError` subclasses and is the only entry point that can thread per-request DPoP context. Use it when you build the challenge yourself, as `bearerAuth` does.
 
 ## Cleanup
 
