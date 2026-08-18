@@ -42,9 +42,10 @@
 	"scripts": {
 		"prepack": "node ../../scripts/sync-package-files.mjs",
 		"build": "tsc -b",
-		"format": "biome format --write src package.json tsconfig.json",
-		"lint": "biome lint src --error-on-warnings",
-		"typecheck": "tsc -b",
+		"format": "biome format --write src package.json tsconfig.json tsconfig.test.json vitest.config.ts",
+		"lint": "biome lint src tests demo vitest.config.ts --error-on-warnings",
+		"typecheck": "tsc -b && npm run typecheck:tests",
+		"typecheck:tests": "tsc -p tsconfig.test.json",
 		"test": "vitest run",
 		"test:coverage": "vitest run --coverage",
 		"test:integration": "vitest run tests/auth.integration.test.ts"

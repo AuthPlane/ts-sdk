@@ -14,17 +14,5 @@
 				"noUnusedFunctionParameters": "off"
 			}
 		}
-	},
-	"overrides": [
-		{
-			"includes": ["src/**/*.ts"],
-			"linter": {
-				"rules": {
-					"suspicious": {
-						"noExplicitAny": "off"
-					}
-				}
-			}
-		}
-	]
+	}
 }

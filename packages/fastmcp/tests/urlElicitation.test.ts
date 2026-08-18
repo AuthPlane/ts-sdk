@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
 import { AuthError, ConsentRequiredError } from "@authplane/sdk/core";
 
@@ -20,9 +20,10 @@ describe("toUrlElicitationRequiredError", () => {
 			{ createElicitationId: () => "elicitation-123" },
 		);
 		expect(result).toBeInstanceOf(UrlElicitationRequiredError);
-		expect(result!.code).toBe(-32042);
-		expect(result!.elicitations[0]?.elicitationId).toBe("elicitation-123");
-		expect(result!.elicitations[0]?.url).toBe(
+		assert(result);
+		expect(result.code).toBe(-32042);
+		expect(result.elicitations[0]?.elicitationId).toBe("elicitation-123");
+		expect(result.elicitations[0]?.url).toBe(
 			"https://as.example.com/consent?service=calendar",
 		);
 	});
@@ -31,7 +32,8 @@ describe("toUrlElicitationRequiredError", () => {
 		const err = makeConsentError("https://as.example.com/c");
 		const result = toUrlElicitationRequiredError(err);
 		expect(result).not.toBeNull();
-		expect(result!.elicitations[0]?.message).toBe(err.describe());
+		assert(result);
+		expect(result.elicitations[0]?.message).toBe(err.describe());
 	});
 
 	it("returns null for ConsentRequiredError without consentUrl", () => {
@@ -58,14 +60,16 @@ describe("toUrlElicitationRequiredError", () => {
 			createElicitationId: () => "el-2",
 		});
 		expect(result).toBeInstanceOf(UrlElicitationRequiredError);
-		expect(result!.elicitations[0]?.elicitationId).toBe("el-2");
+		assert(result);
+		expect(result.elicitations[0]?.elicitationId).toBe("el-2");
 	});
 
 	it("generates a UUID elicitationId by default", () => {
 		const result = toUrlElicitationRequiredError(
 			makeConsentError("https://as.example.com/c"),
 		);
-		expect(result!.elicitations[0]?.elicitationId).toMatch(
+		assert(result);
+		expect(result.elicitations[0]?.elicitationId).toMatch(
 			/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
 		);
 	});

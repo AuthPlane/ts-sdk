@@ -15,6 +15,7 @@ describe("@authplane/hono public surface", () => {
 		expect(names).toEqual([
 			"REQUIRED_SCOPE_CONTEXT_KEY",
 			"authplaneHonoAuth",
+			"authplaneOnError",
 			"bearerAuth",
 			"protectedResourceMetadataHandler",
 			"requireScope",

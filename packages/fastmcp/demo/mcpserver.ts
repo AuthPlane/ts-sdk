@@ -13,7 +13,7 @@ import { FastMCP, requireScopes } from "fastmcp";
 import { z } from "zod";
 import {
   authplaneFastMcpAuth,
-  ASCredentials,
+  type ASCredentials,
   IntrospectionRevocation,
 } from "@authplane/fastmcp";
 
@@ -25,7 +25,7 @@ function env(name: string, legacyName: string, fallback: string): string {
 }
 
 const baseUrl = env("AUTHPLANE_BASE_URL", "BASE_URL", "http://localhost:8080");
-const resource = baseUrl.replace(/\/+$/, "") + "/mcp";
+const resource = `${baseUrl.replace(/\/+$/, "")}/mcp`;
 const parsedBaseUrl = new URL(baseUrl);
 const port = parsedBaseUrl.port
   ? Number(parsedBaseUrl.port)

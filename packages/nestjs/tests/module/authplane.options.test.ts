@@ -1,3 +1,4 @@
+import type { ModuleMetadata } from "@nestjs/common";
 import { describe, expectTypeOf, it } from "vitest";
 
 import type {
@@ -55,8 +56,6 @@ describe("AuthplaneModuleAsyncOptions (type surface)", () => {
 
 	it("accepts imports from @nestjs/common ModuleMetadata", () => {
 		const asyncOpts: AuthplaneModuleAsyncOptions = { imports: [] };
-		expectTypeOf(asyncOpts.imports).toEqualTypeOf<
-			ReadonlyArray<unknown> | undefined
-		>();
+		expectTypeOf(asyncOpts.imports).toEqualTypeOf<ModuleMetadata["imports"]>();
 	});
 });

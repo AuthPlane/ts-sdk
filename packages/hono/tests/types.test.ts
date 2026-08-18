@@ -38,9 +38,16 @@ describe("HonoAuthVariables", () => {
 		});
 	});
 
-	it("is structurally equivalent to { auth: VerifiedClaims }", () => {
+	// `authplaneRequiredScope` was added to HonoAuthVariables by the
+	// insufficient_scope work (see src/types.ts); this assertion still named
+	// the shape from before that change and nothing evaluated it, because
+	// expectTypeOf is erased at runtime and the file was outside every tsconfig.
+	// Still an exact toEqualTypeOf, so it fails again the next time the type
+	// gains a member.
+	it("is structurally equivalent to { auth, authplaneRequiredScope? }", () => {
 		expectTypeOf<HonoAuthVariables>().toEqualTypeOf<{
 			auth: VerifiedClaims;
+			authplaneRequiredScope?: string;
 		}>();
 	});
 });

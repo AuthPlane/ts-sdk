@@ -10,7 +10,7 @@ Complete reference for the Authplane adapter for [Hono](https://hono.dev). Start
 - [Context shape (`c.get("auth")`)](#context-shape-cgetauth)
 - [Scope enforcement](#scope-enforcement)
 - [Per-route scope enforcement with `requireScope`](#per-route-scope-enforcement-with-requirescope)
-- [Error bridging with `app.onError`](#error-bridging-with-apponerror)
+- [Error handling with `authplaneOnError`](#error-handling-with-authplaneonerror)
 - [DPoP-bound tokens](#dpop-bound-tokens)
 - [Introspection and revocation](#introspection-and-revocation)
 - [Custom fetch settings](#custom-fetch-settings)
@@ -78,6 +78,8 @@ The adapter produces:
 | `resource` | `string` (required) | Resource URI tokens must be audience-bound to (`aud` claim). |
 | `scopes` | `string[]` (optional) | All scopes this server supports. Used for PRM and, by default, as `requiredScopes`. |
 | `requiredScopes` | `string[]` (optional) | Override of scopes enforced by `bearerAuth`. Defaults to `scopes` when absent (matches `@authplane/mcp` behaviour). |
+| `realm` | `string` (optional) | RFC 6750 §3 protection realm, emitted as `realm="…"` on every `WWW-Authenticate` challenge. Wired into **both** `bearerAuth` and `auth.onError`, so the verification-path (401) and handler-raised (403) challenges cannot drift. |
+| `emitDownstreamChallenge` | `boolean` (optional, default `true`) | Whether `bearerAuth` may write its own RFC 6750 §3 challenge for an `AuthplaneError` thrown by a guarded downstream route. Set `false` to keep full control of the downstream response from your own `onError`. Forwarded verbatim to `bearerAuth`. |
 | `asCredentials` | `{ clientId, clientSecret }` (optional) | AS client credentials. Required when introspection/revocation is enabled. |
 | `fetchSettings` | `FetchSettings` (optional) | Outbound fetch hardening (SSRF protection, timeouts, allowlists) applied to **both** AS metadata and JWKS document fetches. |
 | `jwksRefreshSeconds` | `number` (optional, default `300`) | JWKS cache TTL. |
@@ -101,6 +103,7 @@ Plus every option from `AuthplaneResourceOptions` (`core`) not otherwise overrid
 | `client` | `AuthplaneClient` | The underlying client — owns the JWKS and metadata refresh timers. Use it to run AS traffic (token exchange, introspection, …), and call `client.close()` on shutdown to release the timers. Unlike `@authplane/mcp` and `@authplane/fastmcp`, Hono's factory always creates a client, so this field is non-nullable. |
 | `verifier` | `AuthplaneResource` | The core resource primitive; call `verifier.verify(token)` directly to bypass the middleware. |
 | `bearerAuth` | `MiddlewareHandler<{ Variables: HonoAuthVariables }>` | Ready-to-use Hono middleware. Verifies token, enforces scopes, attaches `c.get("auth")`. |
+| `onError` | `ErrorHandler<E>` | Preconfigured `app.onError` handler, bound with the SAME `realm` + `resource_metadata` URL as `bearerAuth`. Install with `app.onError(auth.onError)` so a handler-raised `AuthplaneError` (e.g. `requireScope` → `InsufficientScope`) emits a challenge that matches the verification path. Generic over the app's `Env` — instantiate the factory at your `Bindings` shape to attach it to a Workers-typed app without a cast. |
 | `protectedResourceMetadataPath` | `string` | Hono route path where the PRM should be served (e.g. `/.well-known/oauth-protected-resource/mcp`). |
 | `protectedResourceMetadata` | `ProtectedResourceMetadata` | The PRM JSON payload. |
 | `protectedResourceMetadataHandler` | `Handler` | Hono handler that serves the PRM. |
@@ -157,40 +160,42 @@ app.post("/tools/delete_thing", auth.bearerAuth, async (c) => {
 });
 ```
 
-`requireScope` throws core `InsufficientScope` (from `@authplane/sdk/core`) if the scope is missing from `c.get("auth").scopes`. Pair it with an `onError` bridge that funnels `AuthplaneError` subclasses through core's `httpStatus()` + `wwwAuthenticate()`.
+`requireScope` throws core `InsufficientScope` (from `@authplane/sdk/core`) if the scope is missing from `c.get("auth").scopes`. **No error-handling wiring is required:** when the route is behind `auth.bearerAuth`, the adapter catches that `InsufficientScope` and returns `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="tools/delete_thing"` — the challenge carries the exact per-route scope you passed to `requireScope`, not the middleware-level required-scope union. See [Error handling with `authplaneOnError`](#error-handling-with-authplaneonerror) if you prefer an explicit application-level handler.
 
 > Note on cross-adapter ergonomics: `@authplane/mcp`'s `requireScope` takes `(scope, authInfo)` to match MCP's tool-handler extras. Hono's takes `(c, scope)` to match Hono's context-first convention. Same name, same behavior, argument order deliberately different — check the signature when switching adapters.
 
-## Error bridging with `app.onError`
+## Error handling with `authplaneOnError`
 
-`bearerAuth` handles errors from its own verification path directly — it writes 401 / 403 with the right `WWW-Authenticate` header before the handler ever runs. But errors thrown *from inside a handler* (most commonly from `requireScope`) escape into Hono's `app.onError` hook. The minimal bridge:
+**Recommended: install `auth.onError` as your app error handler.** The factory returns a preconfigured `onError` bound with the SAME `realm` and `resource_metadata` URL it wired into `auth.bearerAuth`, so a 401 from token verification and a 403 from a handler-raised `InsufficientScope` carry an identical challenge — they cannot drift, and you never re-plumb those values by hand. One line wires every `AuthplaneError` — whether raised on the middleware's own verification path or thrown from inside a guarded route (most commonly `requireScope` raising `InsufficientScope`) — to the correct RFC 6750 §3 response:
 
 ```ts
-import {
-  AuthplaneError,
-  httpStatus,
-  InsufficientScope,
-  wwwAuthenticate,
-} from "@authplane/sdk/core";
-
-app.onError((err, c) => {
-  if (err instanceof AuthplaneError) {
-    c.header(
-      "WWW-Authenticate",
-      wwwAuthenticate(err, {
-        resourceMetadataUrl: auth.verifier.prmDocumentUrl(),
-      }),
-    );
-    const code =
-      err instanceof InsufficientScope ? "insufficient_scope" : "invalid_token";
-    return c.json(
-      { error: code, error_description: err.message },
-      httpStatus(err) as 401 | 403 | 503,
-    );
-  }
-  return c.json({ error: "server_error" }, 500);
-});
+app.onError(auth.onError);
 ```
+
+`auth.onError` is a ready-bound `authplaneOnError()`; call `authplaneOnError()` yourself only when you are not using the factory (e.g. you hand-wired `bearerAuth`) or need different challenge options:
+
+```ts
+import { authplaneOnError } from "@authplane/hono";
+
+app.onError(
+  authplaneOnError({
+    realm: "https://api.example.com/mcp",
+    resourceMetadataUrl: auth.verifier.prmDocumentUrl(),
+  }),
+);
+```
+
+Both are safe exactly as written. `authplaneOnError()` funnels every `AuthplaneError` through core's `httpStatus()` + `wwwAuthenticate()` — preferring the per-route scope stashed by `requireScope` for the `insufficient_scope` challenge — and by **default** maps any *non*-`AuthplaneError` to the same clean `server_error` 500 the middleware emits (with a fixed `"Internal Server Error"` description and a `console.error` of the original error, so the raw message never leaks to the caller while the stack is still logged server-side). Because `app.onError(handler)` *replaces* Hono's built-in error handler, that default is what stops a copy-pasted one-liner from turning a route `TypeError` or DB failure into an unhandled rejection. All challenge options (`realm`, `resourceMetadataUrl`, `requiredScopes`) are optional. It is also generic over the Hono `Env`, so it typechecks on a `Bindings`-typed app (e.g. `new Hono<{ Bindings: Env; Variables: HonoAuthVariables }>()`, the Cloudflare Workers shape).
+
+> **`fallback` for non-`AuthplaneError`s.** The default `fallback: "server_error"` fills the gap left by replacing Hono's built-in handler. If you deliberately chain an outer error handler behind this one, pass `fallback: "rethrow"` to re-throw non-`AuthplaneError`s for it to catch — but with no outer handler a re-thrown error escapes uncaught and Hono (or your server) surfaces it with no clean 500.
+
+### Safety net: the zero-config middleware guard
+
+You do not *have* to install `authplaneOnError()`. Even with no app `onError`, `bearerAuth` guards the downstream handler itself: an `AuthplaneError` thrown from a route behind `auth.bearerAuth` is caught after `next()` and turned into the same RFC 6750 §3 challenge, so a scope failure still returns `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="<the scope you passed to requireScope>"` — zero wiring. Non-`AuthplaneError` failures are left untouched so genuine application errors are never masked as an auth response.
+
+The two paths cooperate rather than double-handle. On a downstream throw, Hono dispatches to `app.onError` **first** (inside the middleware's `next()`), so `authplaneOnError()` produces the challenge before control returns to the middleware. The middleware's post-`next()` guard then sees a `WWW-Authenticate` header already on the response and, because of its `!c.res.headers.has("WWW-Authenticate")` check, suppresses its own write — so the challenge is emitted exactly once. (It is this header check, not the order of the two handlers, that prevents the double emit.) To keep full control of a downstream `AuthplaneError` response yourself — even one that carries no challenge — set `emitDownstreamChallenge: false`. Pass it to `authplaneHonoAuth({ emitDownstreamChallenge: false })` and the factory forwards it to `bearerAuth`; if you hand-wire the middleware, set it on `bearerAuth` directly.
+
+> **Zero-config log spam.** On the zero-config path (no app `onError`), an expected `insufficient_scope` throw from a downstream `requireScope` travels through Hono's DEFAULT error handler, which `console.error`s the full stack *before* `bearerAuth` rewrites the response to the clean `403` challenge. The final HTTP response is correct, but the error is still logged at error level. This is inherent to the inspect-`c.error`-after-`next()` design and cannot be fixed inside the middleware. Installing `authplaneOnError()` (or any app `onError`) replaces Hono's default handler and suppresses that logging — another reason to prefer it.
 
 Every error funnels through core's `httpStatus()` + `wwwAuthenticate()`: `InsufficientScope` → 403 + `Bearer …`, DPoP failures → 401 + `DPoP …` (except `DPoPNotSupported`), upstream-AS failures (`JWKSFetchError`, `MetadataFetchError`) → 503 with retry semantics.
 
