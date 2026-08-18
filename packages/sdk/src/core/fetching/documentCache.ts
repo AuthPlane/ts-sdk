@@ -243,7 +243,10 @@ export class MetadataCache extends DocumentCache<Record<string, unknown>> {
 			...config,
 		});
 
-		this.expectedIssuer = (options.expectedIssuer ?? "").replace(/\/+$/g, "");
+		// RFC 8414 §3.3: the issuer is compared for identity. Keep the expected
+		// value verbatim so the comparison in `validateMetadata` is byte-for-byte;
+		// a trailing-slash difference must surface as a mismatch, not be reconciled.
+		this.expectedIssuer = options.expectedIssuer ?? "";
 		this.allowHttp = options.allowHttp ?? false;
 	}
 
@@ -271,9 +274,11 @@ export class MetadataCache extends DocumentCache<Record<string, unknown>> {
 	private validateMetadata(
 		metadata: Record<string, unknown>,
 	): Record<string, unknown> {
-		const rawIssuer =
-			typeof metadata.issuer === "string" ? metadata.issuer : "";
-		const issuer = rawIssuer.replace(/\/+$/g, "");
+		// RFC 8414 §3.3: compare the raw issuer identifier for exact equality.
+		// Do NOT strip a trailing slash — a document whose issuer differs from the
+		// expected identifier only by a trailing slash is a different identity and
+		// must be rejected.
+		const issuer = typeof metadata.issuer === "string" ? metadata.issuer : "";
 		if (!issuer) {
 			throw new MetadataFetchError(
 				"AS metadata missing required 'issuer' field.",
