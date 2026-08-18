@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { AuthplaneClient } from "../../src/core/index.js";
 import { buildMetadataUrl } from "../../src/core/fetching/metadataUrl.js";
 import { isIpAllowed } from "../../src/core/fetching/ssrf.js";
 
@@ -12,7 +13,14 @@ function buildTeredoAddress(options: {
   const flags = options.flags ?? 0;
   const port = options.port ?? 40000;
   const obfuscatedPort = (~port) & 0xffff;
-  const obfuscatedClient = options.clientIpv4.map((octet) => (0xff ^ octet) & 0xff);
+  const [rawC0, rawC1, rawC2, rawC3] = options.clientIpv4;
+  const obfuscate = (octet: number): number => (0xff ^ octet) & 0xff;
+  const obfuscatedClient = [
+    obfuscate(rawC0),
+    obfuscate(rawC1),
+    obfuscate(rawC2),
+    obfuscate(rawC3),
+  ] as const;
 
   return [
     "2001",
@@ -37,6 +45,56 @@ describe("buildMetadataUrl", () => {
     expect(url).toBe(
       "https://auth.example.com/.well-known/oauth-authorization-server/org/tenant"
     );
+  });
+
+  // RFC 8414 §3.1: derivation strips the issuer path's terminating slash when
+  // building the `.well-known` URL (previously asserted only by a source
+  // comment; pin it so the strip cannot silently regress).
+  it("drops the terminating slash of the issuer path during derivation", () => {
+    expect(buildMetadataUrl("https://auth.example.com/tenant-a/")).toBe(
+      "https://auth.example.com/.well-known/oauth-authorization-server/tenant-a"
+    );
+  });
+
+  it("rejects an issuer carrying a query component", () => {
+    expect(() => buildMetadataUrl("https://auth.example.com/t?x=1")).toThrow(
+      TypeError
+    );
+  });
+
+  it("rejects an issuer carrying a fragment component", () => {
+    expect(() => buildMetadataUrl("https://auth.example.com/t#frag")).toThrow(
+      TypeError
+    );
+  });
+
+  it("rejects an issuer carrying a bare empty query", () => {
+    expect(() => buildMetadataUrl("https://auth.example.com/t?")).toThrow(
+      TypeError
+    );
+  });
+
+  it("does not leak the rejected query value into the error message", () => {
+    expect(() =>
+      buildMetadataUrl("https://auth.example.com/t?token=secret")
+    ).toThrow("https://auth.example.com/t");
+    expect(() =>
+      buildMetadataUrl("https://auth.example.com/t?token=secret")
+    ).not.toThrow("secret");
+  });
+});
+
+describe("AuthplaneClient.create rejects a query-bearing issuer", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("rejects before any network fetch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await expect(
+      AuthplaneClient.create({ issuer: "https://auth.example.com/t?x=1" })
+    ).rejects.toThrow(TypeError);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 

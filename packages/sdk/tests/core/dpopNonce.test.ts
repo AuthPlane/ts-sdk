@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 
 import { exportJWK, generateKeyPair, jwtVerify } from "jose";
 import { describe, expect, it } from "vitest";
@@ -32,7 +32,7 @@ describe("DPoP nonce retry", () => {
         return;
       }
 
-      const dpop = req.headers["dpop"];
+      const dpop = req.headers.dpop;
       attempt += 1;
 
       if (attempt === 1) {

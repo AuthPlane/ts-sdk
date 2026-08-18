@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { exportJWK, generateKeyPair, type KeyLike } from "jose";
+
 import {
+	DPoPKeyMaterial,
+	DPoPProvider,
 	FetchSettings,
 	InvalidClientError,
 	clientCredentialsGrant,
@@ -166,12 +170,22 @@ describe("auth primitives", () => {
 					expires_in: 120,
 				}),
 			);
-		const dpopProvider = {
-			buildHeadersAsync: vi
-				.fn()
-				.mockResolvedValue({ dpop: "proof-jwt" } as Record<string, string>),
-			noteNonce: vi.fn(),
-		};
+		// A real provider with its two reachable members spied on, rather than an
+		// object literal cast to DPoPProvider: this test is about the nonce
+		// retry in the grant, not about proof construction, but the cast form
+		// stopped type-checking the mock against the class it stands in for.
+		const { privateKey, publicKey } = await generateKeyPair("ES256");
+		const dpopProvider = new DPoPProvider({
+			keyMaterial: new DPoPKeyMaterial({
+				privateKey: privateKey as KeyLike,
+				publicJwk: await exportJWK(publicKey),
+				algorithm: "ES256",
+			}),
+		});
+		vi.spyOn(dpopProvider, "buildHeadersAsync").mockResolvedValue({
+			dpop: "proof-jwt",
+		});
+		const noteNonce = vi.spyOn(dpopProvider, "noteNonce");
 
 		const token = await clientCredentialsGrant({
 			tokenEndpoint: "https://auth.example.com/oauth/token",
@@ -182,7 +196,7 @@ describe("auth primitives", () => {
 
 		expect(token.accessToken).toBe("at_retry");
 		expect(fetchSpy).toHaveBeenCalledTimes(2);
-		expect(dpopProvider.noteNonce).toHaveBeenCalledWith(
+		expect(noteNonce).toHaveBeenCalledWith(
 			"https://auth.example.com/oauth/token",
 			"nonce-1",
 		);

@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import { generateKeyPair, exportJWK } from "jose";
 
 import { describe, expect, it } from "vitest";
@@ -7,7 +7,6 @@ import { describe, expect, it } from "vitest";
 import {
   AuthplaneClient,
   CircuitOpenError,
-  FetchSettings,
   ServerError,
 } from "../../src/core/index.js";
 
@@ -15,17 +14,6 @@ type TokenHandler = (req: import("node:http").IncomingMessage) => Promise<{
   statusCode: number;
   json: Record<string, unknown>;
 }>;
-
-function readRequestBody(req: import("node:http").IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk.toString("utf-8");
-    });
-    req.on("end", () => resolve(body));
-    req.on("error", reject);
-  });
-}
 
 async function startFullServer(
   params: {
@@ -35,10 +23,12 @@ async function startFullServer(
   },
 ): Promise<{ server: Server; base: string }> {
   const { privateKey, publicKey } = await generateKeyPair("RS256");
-  const jwk = (await exportJWK(publicKey)) as Record<string, unknown>;
-  jwk.kid = "kid_1";
-  jwk.alg = "RS256";
-  jwk.use = "sig";
+  const jwk: Record<string, unknown> = {
+    ...(await exportJWK(publicKey)),
+    kid: "kid_1",
+    alg: "RS256",
+    use: "sig",
+  };
 
   const server = createServer(async (req, res) => {
     if (!req.url) {
@@ -180,7 +170,9 @@ describe("AuthplaneClient more branches", () => {
         jwksRefreshSeconds: 60,
       });
 
-      (client as any).metadataCache = undefined;
+      // No public API invalidates the cached AS metadata; reach the private
+      // field through the narrowest shape that names it.
+      (client as unknown as { metadataCache: unknown }).metadataCache = undefined;
 
       await expect(client.clientCredentials(["tools/echo"])).rejects.toThrow(
         /authplane: client not initialized/,

@@ -1,8 +1,8 @@
-import { createServer, type Server } from "node:http";
-import { AddressInfo } from "node:net";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { Buffer } from "node:buffer";
 
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 import { exportJWK, generateKeyPair } from "jose";
 
 import {
@@ -55,7 +55,8 @@ describe("OAuth protocol unit conformance (subset)", () => {
       await as.clientCredentials(["read"]);
 
       expect(receivedAuthHeader).toMatch(/^Basic\s+/);
-      const b64 = receivedAuthHeader!.slice("Basic ".length);
+      assert(receivedAuthHeader);
+      const b64 = receivedAuthHeader.slice("Basic ".length);
       const decoded = Buffer.from(b64, "base64").toString("utf-8");
 
       // Authplane TS uses encodeURIComponent on both clientId and secret.
@@ -227,15 +228,27 @@ describe("OAuth protocol unit conformance (subset)", () => {
   });
 });
 
+/**
+ * exactOptionalPropertyTypes: `authorization?: string` means the header is
+ * absent or a string, never present-and-undefined. Omit the key rather than
+ * setting it to `undefined` — the same shape `conformance-tests/
+ * conformanceCase.ts` uses for an absent `failure.stack`.
+ */
+function capturedHeaders(authorization: string | undefined): { authorization?: string } {
+  return authorization === undefined ? {} : { authorization };
+}
+
 type TokenRequest = { headers: { authorization?: string; [k: string]: string | undefined }; body: string };
 
 async function startAs(options: {
   onTokenRequest: (req: TokenRequest) => { statusCode: number; json: Record<string, unknown> };
 }): Promise<{ issuer: string; close: () => Promise<void> }> {
-  const { privateKey, publicKey } = await generateKeyPair("RS256");
-  const jwk = (await exportJWK(publicKey)) as Record<string, unknown> & { kid?: string };
-  jwk.kid = "kid_1";
-  jwk.use = "sig";
+  const { publicKey } = await generateKeyPair("RS256");
+  const jwk: Record<string, unknown> = {
+    ...(await exportJWK(publicKey)),
+    kid: "kid_1",
+    use: "sig",
+  };
 
   const server = createServer();
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -265,9 +278,8 @@ async function startAs(options: {
       let body = "";
       req.on("data", (chunk) => (body += chunk.toString("utf-8")));
       req.on("end", () => {
-        const authorization = typeof req.headers.authorization === "string" ? req.headers.authorization : undefined;
         const out = options.onTokenRequest({
-          headers: { authorization },
+          headers: capturedHeaders(req.headers.authorization),
           body,
         });
         res.statusCode = out.statusCode;
@@ -306,8 +318,7 @@ async function startRevokeEndpoint(options: {
       let body = "";
       req.on("data", (chunk) => (body += chunk.toString("utf-8")));
       req.on("end", () => {
-        const authorization = typeof req.headers.authorization === "string" ? req.headers.authorization : undefined;
-        const out = options.onRevoke({ headers: { authorization }, body });
+        const out = options.onRevoke({ headers: capturedHeaders(req.headers.authorization), body });
         res.statusCode = out.statusCode;
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify(out.json));
@@ -341,8 +352,7 @@ async function startIntrospectionEndpoint(options: {
       let body = "";
       req.on("data", (chunk) => (body += chunk.toString("utf-8")));
       req.on("end", () => {
-        const authorization = typeof req.headers.authorization === "string" ? req.headers.authorization : undefined;
-        const out = options.onIntrospect({ headers: { authorization }, body });
+        const out = options.onIntrospect({ headers: capturedHeaders(req.headers.authorization), body });
         res.statusCode = out.statusCode;
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify(out.json));

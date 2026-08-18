@@ -1,5 +1,5 @@
 import { exportJWK, generateKeyPair, jwtVerify, type JWK } from "jose";
-import { describe, expect, test } from "vitest";
+import { assert, describe, expect, test } from "vitest";
 
 import {
   DPoPKeyMaterial,
@@ -31,6 +31,7 @@ describe("DPoPProvider / DPoPKeyMaterial", () => {
     });
 
     const [encodedHeader] = proof.split(".");
+    assert(encodedHeader);
     const header = JSON.parse(
       Buffer.from(encodedHeader, "base64url").toString("utf-8"),
     ) as { typ: string; alg: string; jwk: JWK };
@@ -211,6 +212,7 @@ describe("DPoPProvider / DPoPKeyMaterial", () => {
       url: "https://api.example.com/x",
     });
     const [, payloadB64] = proof.split(".");
+    assert(payloadB64);
     const payload = JSON.parse(
       Buffer.from(payloadB64, "base64url").toString("utf-8"),
     ) as { nonce?: string; ath?: string };

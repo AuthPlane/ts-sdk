@@ -1,5 +1,5 @@
-import { createServer, type Server } from "node:http";
-import { AddressInfo } from "node:net";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 
 import { describe, expect, it } from "vitest";
 

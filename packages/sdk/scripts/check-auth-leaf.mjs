@@ -1,3 +1,15 @@
+// Enforces the auth leaf property: nothing under `src/auth` may import from
+// `core`, so `@authplane/sdk/auth` stays importable without dragging the
+// resource-server half of the package in behind it.
+//
+// Scope is `src/auth` only, and stays there now that tests are type-checked and
+// linted too. The property being protected belongs to the published artifact,
+// and tests are not published — `tsconfig.json` includes `src` and nothing
+// else. A test is entitled to drive both halves at once: seven files under
+// `tests/` and `conformance-tests/` already import from `src/auth` and
+// `src/core` together, and none of them changes what a consumer of
+// `@authplane/sdk/auth` ends up loading. Extending this check over them would
+// forbid legitimate tests while protecting nothing.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
