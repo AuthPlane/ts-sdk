@@ -11,15 +11,21 @@
     "packages/hono",
     "packages/nestjs"
   ],
+  "overrides": {
+    "ip-address": "^10.4.0",
+    "ajv": {
+      "fast-uri": "^3.1.5"
+    }
+  },
   "engines": {
     "node": ">=22",
     "npm": ">=10"
   },
   "scripts": {
     "build": "tsc -b",
-    "format": "npm run format --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
-    "typecheck": "tsc -b",
+    "format": "biome format --write vitest.coverage.shared.mts && npm run format --workspaces",
+    "lint": "biome lint vitest.coverage.shared.mts --error-on-warnings && npm run lint --workspaces",
+    "typecheck": "tsc -b && npm run typecheck:tests --workspaces",
     "test": "npm run test -w @authplane/sdk && npm run test -w @authplane/mcp && npm run test -w @authplane/fastmcp && npm run test -w @authplane/hono && npm run test -w @authplane/nestjs",
     "test:coverage": "npm run test:coverage -w @authplane/sdk && npm run test:coverage -w @authplane/mcp && npm run test:coverage -w @authplane/fastmcp && npm run test:coverage -w @authplane/hono && npm run test:coverage -w @authplane/nestjs",
     "check": "npm run lint && npm run typecheck && npm run test:coverage"

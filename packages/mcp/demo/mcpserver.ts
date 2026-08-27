@@ -16,9 +16,12 @@ import { z } from "zod";
 import {
   authplaneMcpAuth,
   requireScope,
-  ASCredentials,
+  type ASCredentials,
   IntrospectionRevocation,
 } from "@authplane/mcp";
+// Not re-exported by `@authplane/mcp`; the hono and nestjs demos reach for
+// `@authplane/sdk/core` the same way.
+import { buildDPoPRequestContext } from "@authplane/sdk/core";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, ".env") });
@@ -167,12 +170,17 @@ function createMcpServer(): McpServer {
     async ({ token, proof, method, url }, extra) => {
       requireScope("tools/add", extra.authInfo);
       const verifier = auth.verifier;
+      // Build the context through the factory rather than by object literal:
+      // `buildDPoPRequestContext` is where RFC 9449 §4.3 #1 ("not more than
+      // one DPoP header") is enforced, so a comma-joined pair arriving in
+      // `proof` fails with MultipleDPoPProofs instead of being verified as a
+      // single opaque string.
       const claims = await verifier.verify(token, {
-        dpopRequest: {
+        dpopRequest: buildDPoPRequestContext({
           method,
           url,
-          proof,
-        },
+          dpopHeaderValues: [proof],
+        }),
       });
       return {
         content: [
@@ -209,8 +217,9 @@ const sessions = new Map<
 
 app.all("/mcp", auth.bearerAuth, async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
-  if (sessionId && sessions.has(sessionId)) {
-    await sessions.get(sessionId)!.transport.handleRequest(req, res, req.body);
+  const existing = sessionId === undefined ? undefined : sessions.get(sessionId);
+  if (existing) {
+    await existing.transport.handleRequest(req, res, req.body);
     return;
   }
 
@@ -220,6 +229,12 @@ app.all("/mcp", auth.bearerAuth, async (req, res) => {
   });
   const mcp = createMcpServer();
   sessions.set(newSessionId, { transport, server: mcp });
+  // @ts-expect-error -- upstream @modelcontextprotocol/sdk mismatch, not ours:
+  // Transport declares `onclose?: () => void` (shared/transport.d.ts:65) while
+  // StreamableHTTPServerTransport exposes it as an accessor typed
+  // `(() => void) | undefined` (server/streamableHttp.d.ts:70-71). Under
+  // exactOptionalPropertyTypes those are incompatible. Delete this line's
+  // suppression once the SDK's declarations agree — tsc will flag it as unused.
   await mcp.connect(transport);
   await transport.handleRequest(req, res, req.body);
 });

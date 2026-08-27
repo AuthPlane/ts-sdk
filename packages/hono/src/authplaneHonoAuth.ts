@@ -7,8 +7,9 @@ import {
 	type FetchSettings,
 	type ProtectedResourceMetadata,
 } from "@authplane/sdk/core";
-import type { Handler, MiddlewareHandler } from "hono";
+import type { ErrorHandler, Handler, MiddlewareHandler } from "hono";
 
+import { authplaneOnError } from "./authplaneOnError.js";
 import { bearerAuth } from "./bearerAuth.js";
 import { protectedResourceMetadataHandler } from "./prmHandler.js";
 import type { HonoAuthVariables } from "./types.js";
@@ -28,9 +29,27 @@ export interface AuthplaneHonoAuthOptions
 	scopes?: string[];
 	/**
 	 * Scopes the middleware must enforce. Defaults to `scopes` when not
-	 * provided, matching the behaviour of the Python + MCP adapters.
+	 * provided, so an unspecified enforcement set treats every supported scope
+	 * as required.
 	 */
 	requiredScopes?: string[];
+	/**
+	 * Protection realm (RFC 6750 §3) emitted as `realm="…"` on every
+	 * `WWW-Authenticate` challenge. Threaded into BOTH the `bearerAuth`
+	 * verification path and the preconfigured {@link AuthplaneHonoAuth.onError}
+	 * handler, so a 401 from token verification and a 403 from a handler-raised
+	 * `InsufficientScope` carry an identical `realm` instead of drifting.
+	 */
+	realm?: string;
+	/**
+	 * Whether `bearerAuth` may write its own RFC 6750 §3 challenge for an
+	 * {@link AuthplaneError} thrown by a guarded downstream route. Default
+	 * `true` — the adapter guarantees the challenge with zero app wiring. Set
+	 * `false` to opt out and keep full control of a downstream `AuthplaneError`
+	 * response (e.g. from your own `onError`). Forwarded verbatim to
+	 * `bearerAuth`.
+	 */
+	emitDownstreamChallenge?: boolean;
 	/**
 	 * Outbound fetch hardening (SSRF, timeouts, allowlists) applied to both
 	 * AS metadata and JWKS document fetches. When omitted, defaults are
@@ -93,13 +112,32 @@ export interface AuthplaneHonoAuthOptions
  * needs to enable Authplane-issued bearer auth on a Hono server in a single
  * call.
  */
-export interface AuthplaneHonoAuth {
+export interface AuthplaneHonoAuth<
+	E extends { Variables: HonoAuthVariables } = { Variables: HonoAuthVariables },
+> {
 	/** Shared Authplane client. Exposed so callers can reuse it for AS traffic. */
 	client: AuthplaneClient;
 	/** Core resource verifier. Useful for custom flows outside the middleware. */
 	verifier: AuthplaneResource;
 	/** Fully-configured bearer middleware (scope, DPoP, PRM URL all wired). */
 	bearerAuth: MiddlewareHandler<{ Variables: HonoAuthVariables }>;
+	/**
+	 * Preconfigured `app.onError` handler, bound with the SAME `realm` and
+	 * `resource_metadata` URL wired into {@link bearerAuth}. Install it with
+	 * `app.onError(auth.onError)` so a handler-raised `AuthplaneError` (most
+	 * commonly `requireScope()` throwing `InsufficientScope`) emits a challenge
+	 * that matches the verification-path challenge — the two cannot drift, and
+	 * the app never re-plumbs `realm`/`resourceMetadataUrl` by hand. A
+	 * non-`AuthplaneError` maps to a clean `server_error` 500 (see
+	 * {@link authplaneOnError}).
+	 *
+	 * Typed as `ErrorHandler<E>` so `app.onError(auth.onError)` typechecks on a
+	 * `Bindings`-typed app: instantiate the factory at the app's `Env`
+	 * (`authplaneHonoAuth<{ Bindings: Env; Variables: HonoAuthVariables }>(…)`)
+	 * and the handler attaches without a cast. `E` defaults to the plain
+	 * `{ Variables: HonoAuthVariables }` shape.
+	 */
+	onError: ErrorHandler<E>;
 	/** Path (pathname portion) where the PRM handler should be mounted. */
 	protectedResourceMetadataPath: string;
 	/** The RFC 9728 PRM payload served by the handler. */
@@ -119,10 +157,11 @@ export interface AuthplaneHonoAuth {
  * When `requiredScopes` is not provided it defaults to `scopes` so the
  * middleware treats every supported scope as required.
  */
-export async function authplaneHonoAuth(
-	options: AuthplaneHonoAuthOptions,
-): Promise<AuthplaneHonoAuth> {
-	const { requiredScopes, scopes, issuer, resource } = options;
+export async function authplaneHonoAuth<
+	E extends { Variables: HonoAuthVariables } = { Variables: HonoAuthVariables },
+>(options: AuthplaneHonoAuthOptions): Promise<AuthplaneHonoAuth<E>> {
+	const { requiredScopes, scopes, issuer, resource, realm, emitDownstreamChallenge } =
+		options;
 
 	if (
 		options.replayStore !== undefined &&
@@ -145,6 +184,11 @@ export async function authplaneHonoAuth(
 	const protectedResourceMetadataPath = new URL(resourceMetadataUrl).pathname;
 	const protectedResourceMetadata = verifier.prmResponse();
 
+	// `realm` and `emitDownstreamChallenge` are optional and this package builds
+	// under `exactOptionalPropertyTypes`, so fold them in via conditional spread
+	// rather than passing an explicit `undefined`.
+	const realmOption = realm !== undefined ? { realm } : {};
+
 	return {
 		client,
 		verifier,
@@ -153,6 +197,18 @@ export async function authplaneHonoAuth(
 			requiredScopes: resolvedRequiredScopes,
 			resourceMetadataUrl,
 			resourceOrigin,
+			...realmOption,
+			...(emitDownstreamChallenge !== undefined
+				? { emitDownstreamChallenge }
+				: {}),
+		}),
+		// Bind the app error handler to the SAME realm + resource_metadata URL so
+		// `app.onError(auth.onError)` and the verification path emit identical
+		// challenges — no duplicated plumbing, no drift.
+		onError: authplaneOnError<E>({
+			resourceMetadataUrl,
+			requiredScopes: resolvedRequiredScopes,
+			...realmOption,
 		}),
 		protectedResourceMetadataPath,
 		protectedResourceMetadata,

@@ -83,7 +83,14 @@ export class AuthplaneClient {
 		dpopProvider?: DPoPProvider | undefined;
 	}): Promise<AuthplaneClient> {
 		const client = new AuthplaneClient();
-		client.issuer = options.issuer.replace(/\/+$/g, "");
+		// RFC 8414 §2/§3.3: the issuer is an identity, not a location. Store it
+		// byte-for-byte — it is passed to the token verifier as the expected `iss`
+		// and compared against the AS metadata `issuer`. Silently stripping a
+		// trailing slash here desynchronizes the configured issuer from the token's
+		// `iss`, causing every otherwise-valid token to be rejected. Derivation of
+		// the `.well-known` URL (which does drop a terminating slash) happens in
+		// `buildMetadataUrl`, not here.
+		client.issuer = options.issuer;
 		client.authProvider = toAuthProvider(options.auth);
 
 		const resolvedDevMode = options.devMode ?? false;

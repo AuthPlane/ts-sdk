@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 import { exportJWK, generateKeyPair, jwtVerify } from "jose";
 import { createHash } from "node:crypto";
 
@@ -28,9 +28,7 @@ function normalizeHtu(url: string): string {
 describe("dpop: DPoPProvider", () => {
   it("buildHeadersAsync includes nonce, htm/htu and ath; verifyDpopProof passes", async () => {
     const { privateKey, publicKey } = await generateKeyPair("ES256");
-    const publicJwk = (await exportJWK(publicKey)) as Parameters<
-      typeof DPoPProvider
-    >[0]["publicJwk"];
+    const publicJwk = await exportJWK(publicKey);
 
     const nonceStore = new InMemoryDPoPNonceStore(16);
     const provider = new DPoPProvider({
@@ -55,6 +53,7 @@ describe("dpop: DPoPProvider", () => {
 
     expect(typeof headers.DPoP).toBe("string");
 
+    assert(headers.DPoP);
     const verified = await jwtVerify(headers.DPoP, publicKey, { typ: "dpop+jwt" });
     const payload = verified.payload as Record<string, unknown>;
 
@@ -63,7 +62,7 @@ describe("dpop: DPoPProvider", () => {
     expect(payload.nonce).toBe(nonce);
     expect(payload.ath).toBe(sha256Base64Url(accessToken));
 
-    const expectedJkt = await (await import("jose")).calculateJwkThumbprint(publicJwk as any);
+    const expectedJkt = await (await import("jose")).calculateJwkThumbprint(publicJwk);
     await expect(
       verifyDpopProof({
         proof: headers.DPoP,
@@ -80,9 +79,7 @@ describe("dpop: DPoPProvider", () => {
 
   it("verifyDpopProof rejects when htm mismatches", async () => {
     const { privateKey, publicKey } = await generateKeyPair("ES256");
-    const publicJwk = (await exportJWK(publicKey)) as Parameters<
-      typeof DPoPProvider
-    >[0]["publicJwk"];
+    const publicJwk = await exportJWK(publicKey);
 
     const provider = new DPoPProvider({
       keyMaterial: new DPoPKeyMaterial({
@@ -95,8 +92,9 @@ describe("dpop: DPoPProvider", () => {
     const proofHeaders = await provider.buildHeadersAsync("POST", "https://api.example.com/x", {
       accessToken: "at_1",
     });
+    assert(proofHeaders.DPoP);
 
-    const expectedJkt = await (await import("jose")).calculateJwkThumbprint(publicJwk as any);
+    const expectedJkt = await (await import("jose")).calculateJwkThumbprint(publicJwk);
 
     await expect(
       verifyDpopProof({

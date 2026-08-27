@@ -117,7 +117,7 @@ describe("authplaneMcpAuth integration", () => {
       resource: "https://api.example.com/mcp",
     };
 
-    await authplaneMcpAuth(options as any);
+    await authplaneMcpAuth(options);
 
     expect(createSpy).toHaveBeenCalledWith(
       expect.objectContaining({

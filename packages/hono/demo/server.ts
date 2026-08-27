@@ -29,11 +29,7 @@ import { fileURLToPath, URL } from "node:url";
 import { serve } from "@hono/node-server";
 import {
 	type ASCredentials,
-	AuthplaneError,
-	httpStatus,
-	InsufficientScope,
 	IntrospectionRevocation,
-	wwwAuthenticate,
 } from "@authplane/sdk/core";
 import { config } from "dotenv";
 import { Hono } from "hono";
@@ -41,7 +37,6 @@ import { Hono } from "hono";
 import {
 	authplaneHonoAuth,
 	type HonoAuthVariables,
-	REQUIRED_SCOPE_CONTEXT_KEY,
 	requireScope,
 } from "../src/index.js";
 
@@ -70,6 +65,7 @@ const clientSecret =
 const auth = await authplaneHonoAuth({
 	issuer: env("AUTHPLANE_ISSUER", "ISSUER_URL", "http://localhost:9000"),
 	resource,
+	realm: resource,
 	scopes: ["tools/add", "tools/multiply"],
 	devMode: true,
 	asCredentials: {
@@ -120,34 +116,14 @@ app.get("/me", (c) => {
 });
 
 // Bridge scope / token errors thrown from handlers into RFC 6750 responses.
-// The bearerAuth middleware handles errors thrown from *token* validation on
-// its own, but errors from `requireScope()` inside a handler surface through
-// the framework's `onError` hook — so applications get to choose whether to
-// log, translate, or re-throw.
-app.onError((err, c) => {
-	if (err instanceof AuthplaneError) {
-		const wwwOptions: Parameters<typeof wwwAuthenticate>[1] = {
-			realm: resource,
-			resourceMetadataUrl: auth.verifier.prmDocumentUrl(),
-		};
-		if (err instanceof InsufficientScope) {
-			// `requireScope(c, scope)` stashes the offending scope on the
-			// context before throwing so the challenge header can name it
-			// without parsing the error message.
-			const scope = c.get(REQUIRED_SCOPE_CONTEXT_KEY);
-			if (scope) wwwOptions.scope = [scope];
-		}
-		c.header("WWW-Authenticate", wwwAuthenticate(err, wwwOptions));
-		const code =
-			err instanceof InsufficientScope ? "insufficient_scope" : "invalid_token";
-		return c.json(
-			{ error: code, error_description: err.message },
-			httpStatus(err) as 401 | 403 | 503,
-		);
-	}
-	console.error(err);
-	return c.json({ error: "server_error" }, 500);
-});
+// The bearerAuth middleware handles errors thrown from its own *token*
+// validation path, but an `InsufficientScope` from `requireScope()` inside a
+// handler surfaces through the framework's `onError` hook. `auth.onError` is a
+// ready `authplaneOnError` bound with the SAME `realm` + `resource_metadata`
+// URL the factory wired into `bearerAuth`, so the 401 from verification and the
+// 403 from `requireScope()` carry an identical challenge and cannot drift. It
+// maps any other error to a clean `server_error` 500 — no hand-written bridge.
+app.onError(auth.onError);
 
 serve({ fetch: app.fetch, port }, () => {
 	console.log(`Hono Calculator Service running on ${resource}`);

@@ -1,9 +1,10 @@
 import {
 	AuthplaneClient,
 	type AuthplaneResource,
+	FetchSettings,
 } from "@authplane/sdk/core";
 import { Test } from "@nestjs/testing";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 
 import { Module } from "@nestjs/common";
 
@@ -154,6 +155,7 @@ describe("AuthplaneModule.forRoot", () => {
 		const [ctrl] = dynamicModule.controllers as ReadonlyArray<{
 			prototype: Record<string, unknown>;
 		}>;
+		assert(ctrl);
 		const routePath = Reflect.getMetadata(
 			"path",
 			ctrl.prototype.serve as object,
@@ -214,6 +216,7 @@ describe("AuthplaneModule.forRootAsync", () => {
 
 		const customAdapter = {
 			getHeader: vi.fn(),
+			getHeaderValues: vi.fn(),
 			getMethod: vi.fn(),
 			getPathAndQuery: vi.fn(),
 			stashAuthInfo: vi.fn(),
@@ -370,12 +373,13 @@ describe("AuthplaneModule option passthrough", () => {
 		const createSpy = vi
 			.spyOn(AuthplaneClient, "create")
 			.mockResolvedValue(client as unknown as AuthplaneClient);
+		const fetchSettings = new FetchSettings({ timeoutSeconds: 7 });
 
 		const moduleRef = await Test.createTestingModule({
 			imports: [
 				AuthplaneModule.forRoot({
 					...BASE_OPTIONS,
-					fetchSettings: { timeoutSeconds: 7 },
+					fetchSettings,
 					jwksRefreshSeconds: 120,
 					metadataRefreshSeconds: 240,
 				}),
@@ -386,7 +390,7 @@ describe("AuthplaneModule option passthrough", () => {
 			expect.objectContaining({
 				// `fetchSettings` is the unified successor of the old
 				// `jwksFetchSettings` + `metadataFetchSettings` split.
-				fetchSettings: { timeoutSeconds: 7 },
+				fetchSettings,
 				jwksRefreshSeconds: 120,
 				metadataRefreshSeconds: 240,
 			}),

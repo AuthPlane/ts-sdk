@@ -11,6 +11,8 @@ packages/*/demo/.env
 **/.conformance-results/
 packages/sdk/conformance-report.json
 packages/sdk/conformance-report.md
+# staged writes; the report is renamed into place so the pair never diverges
+packages/sdk/.conformance-report.*.tmp
 
 # Generated at pack time by scripts/sync-package-files.mjs (prepack hook).
 # Root LICENSE and CHANGELOG.md are the source of truth.

@@ -1,14 +1,16 @@
 # Contributing to the Authplane TypeScript SDK
 
-Thanks for your interest in contributing. This repository is an npm workspaces monorepo publishing three packages:
+Thanks for your interest in contributing. This repository is an npm workspaces monorepo publishing five packages:
 
 | npm package | Import | Directory |
 |---|---|---|
 | `@authplane/sdk` | `@authplane/sdk` (subpath exports: `./core`, `./auth`) | `packages/sdk/` |
 | `@authplane/mcp` | `@authplane/mcp` | `packages/mcp/` |
 | `@authplane/fastmcp` | `@authplane/fastmcp` | `packages/fastmcp/` |
+| `@authplane/hono` | `@authplane/hono` | `packages/hono/` |
+| `@authplane/nestjs` | `@authplane/nestjs` | `packages/nestjs/` |
 
-Adapters depend on `@authplane/sdk`. A single tagged release publishes all three at the same version (see [RELEASE_POLICY.md](RELEASE_POLICY.md)).
+Adapters depend on `@authplane/sdk`. A single tagged release publishes all five at the same version (see [RELEASE_POLICY.md](RELEASE_POLICY.md)).
 
 ## Reporting Issues
 
@@ -48,7 +50,7 @@ npm run lint              # biome lint --error-on-warnings
 npm run format            # biome format (writes changes)
 ```
 
-`npm run lint` runs across all three workspace packages. Use `npm run format` to auto-fix formatting.
+`npm run lint` runs across all five workspace packages. Use `npm run format` to auto-fix formatting.
 
 **Type-check and build (tsc):**
 
@@ -57,7 +59,7 @@ npm run typecheck         # same as: tsc -b
 npm run build             # same as: tsc -b
 ```
 
-The workspace uses [TypeScript project references](https://www.typescriptlang.org/docs/handbook/project-references.html). `tsc -b` at the root (or in any package) walks the reference graph — it builds `@authplane/sdk` first, then `@authplane/mcp` and `@authplane/fastmcp`. Adapter packages resolve cross-package types directly from `sdk`'s source, so you never need to manually rebuild the SDK before working on an adapter.
+The workspace uses [TypeScript project references](https://www.typescriptlang.org/docs/handbook/project-references.html). `tsc -b` at the root (or in any package) walks the reference graph — it builds `@authplane/sdk` first, then the four adapters (`mcp`, `fastmcp`, `hono`, `nestjs`). Adapter packages resolve cross-package types directly from `sdk`'s source, so you never need to manually rebuild the SDK before working on an adapter.
 
 Incremental state lives in each package's `tsconfig.tsbuildinfo`; repeat invocations only recompile what changed. Clean state: `rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo`.
 
@@ -66,7 +68,7 @@ Incremental state lives in each package's `tsconfig.tsbuildinfo`; repeat invocat
 **Tests (vitest):**
 
 ```bash
-npm test                  # all three workspaces
+npm test                  # all five workspaces
 npm run test:coverage     # same, with v8 coverage output
 ```
 
@@ -87,6 +89,11 @@ Coverage target: ≥ 85% on statements, branches, functions, and lines for every
 ```bash
 # From the directory that contains your ts-sdk/ clone
 git clone https://github.com/AuthPlane/conformance.git
+
+# Check out the exact catalog revision CI pins. The SHA is single-sourced in
+# ts-sdk/.conformance-catalog-ref, so a local run matches CI instead of the
+# moving default branch:
+git -C conformance checkout "$(cat ts-sdk/.conformance-catalog-ref)"
 ```
 
 Expected layout:
@@ -111,7 +118,7 @@ If the catalog isn't available at all, skip the two catalog-dependent tests with
 AUTHPLANE_CONFORMANCE_SKIP_CATALOG=1 npm test
 ```
 
-`catalogAlignment.test.ts` and `z_conformanceReport.test.ts` then report as `skipped`; the rest of the SDK suite runs as normal. Without either the catalog present or the skip flag set, those two tests fail with a clear error.
+`catalogAlignment.test.ts` then reports as `skipped` and the report-generating teardown is a no-op; the rest of the SDK suite runs as normal. Without either the catalog present or the skip flag set, the alignment test fails with a clear error.
 
 **Package pack smoke test:**
 
@@ -133,7 +140,7 @@ Produces `.tgz` tarballs locally. `release.yml` and `publish-npm.yml` run this a
 
 ## Changelog
 
-User-facing changes go in [`CHANGELOG.md`](CHANGELOG.md) under the `[Unreleased]` heading. Follow the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. Release tooling moves entries from `[Unreleased]` to the release version on tag.
+User-facing changes go in [`CHANGELOG.md`](CHANGELOG.md) under the `[Unreleased]` heading. Follow the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. When a release branch is cut, the maintainer renames `[Unreleased]` to `## [X.Y.Z]` on that branch, and afterwards records the version on the default branch — **without** renaming `[Unreleased]` there, since entries land under it during the release window and the next cut requires the section to exist. See [RELEASE_GUIDE.md](RELEASE_GUIDE.md) step 7. Nothing happens at tag time: `release.yml` only checks that the section exists and fails if it does not.
 
 ## GitHub Actions — SHA-pinning
 

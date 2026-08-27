@@ -20,11 +20,14 @@ import { type HonoAuthVariables, REQUIRED_SCOPE_CONTEXT_KEY } from "./types.js";
  * });
  * ```
  *
- * Apps using this helper should pair it with a Hono `onError` handler that
- * funnels `AuthplaneError` through core's `httpStatus()` + `wwwAuthenticate()`.
- * The factory returned by `authplaneHonoAuth` does NOT install a global error
- * handler, to keep application-level error-handling choices with the app
- * owner.
+ * No error-handling wiring is required: when this runs behind the adapter's
+ * `bearerAuth` middleware, the `InsufficientScope` it throws is caught there
+ * and turned into a `403` with a `WWW-Authenticate: Bearer error=
+ * "insufficient_scope", scope="<this scope>"` challenge automatically. The
+ * per-route `scope` stashed below is what surfaces in that challenge. Apps that
+ * prefer an explicit application-level error handler can install
+ * `app.onError(authplaneOnError())` instead — it performs the same mapping and
+ * also covers `AuthplaneError`s thrown outside the middleware's `next()`.
  *
  * If `bearerAuth` never ran for this request (so `c.get("auth")` returns
  * undefined) the helper raises {@link InsufficientScope} as well — that way a

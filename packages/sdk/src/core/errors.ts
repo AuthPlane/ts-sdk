@@ -219,8 +219,13 @@ export function httpStatus(error: unknown): number {
  * and backslash so a crafted error message (or operator-supplied
  * `resourceMetadataUrl` / `realm`) can't terminate the parameter or
  * inject a new header field.
+ *
+ * Exported so adapters that hand messages to header builders outside this
+ * SDK (e.g. `@authplane/mcp`'s `OAuthTokenVerifier` seam, whose host splices
+ * `error.message` into the challenge unsanitised) apply the same ruleset —
+ * a tightened rule lands everywhere at once.
  */
-function sanitiseHeaderValue(value: string): string {
+export function sanitiseHeaderValue(value: string): string {
 	return value.replace(/[\r\n"\\]+/g, " ").trim();
 }
 

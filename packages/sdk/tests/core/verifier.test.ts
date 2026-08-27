@@ -1,5 +1,6 @@
+import { Buffer } from "node:buffer";
 import { createServer, type Server } from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 
 import {
   calculateJwkThumbprint,
@@ -9,11 +10,11 @@ import {
   type JWK,
   type KeyLike,
 } from "jose";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, assert, beforeAll, describe, expect, it } from "vitest";
 
 import {
   AuthplaneClient,
-  AuthplaneResource,
+  type AuthplaneResource,
   type ASCredentials,
   IntrospectionRevocation,
   DPoPReplayDetected,
@@ -32,6 +33,13 @@ interface TestAuthServer {
   issuer: string;
   resource: string;
   privateKey: KeyLike;
+  /**
+   * The `authorization` header of every request the client made to the
+   * introspection endpoint, in order. A test that passes AS credentials has to
+   * be able to assert they reached the wire — asserting only that `verify()`
+   * resolved cannot tell an authenticated introspection from an anonymous one.
+   */
+  introspectionAuthorization: (string | undefined)[];
 }
 
 interface StartOptions {
@@ -51,6 +59,7 @@ async function startAuthServer(options: StartOptions = {}): Promise<TestAuthServ
   const base = `http://127.0.0.1:${addr.port}`;
 
   const hasIntrospection = options.introspectionActive !== undefined;
+  const introspectionAuthorization: (string | undefined)[] = [];
 
   server.on("request", (req, res) => {
     if (!req.url) {
@@ -79,6 +88,7 @@ async function startAuthServer(options: StartOptions = {}): Promise<TestAuthServ
     }
 
     if (req.url === "/oauth/introspect" && req.method === "POST") {
+      introspectionAuthorization.push(req.headers.authorization);
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ active: options.introspectionActive ?? true }));
       return;
@@ -88,7 +98,13 @@ async function startAuthServer(options: StartOptions = {}): Promise<TestAuthServ
     res.end();
   });
 
-  return { server, issuer: base, resource: `${base}/mcp`, privateKey };
+  return {
+    server,
+    issuer: base,
+    resource: `${base}/mcp`,
+    privateKey,
+    introspectionAuthorization,
+  };
 }
 
 async function mintToken(options: {
@@ -625,15 +641,21 @@ describe("AuthplaneResource with introspection", () => {
         clientSecret: "s3cret",
       };
 
+      // Both knobs, which is what every adapter sets: `auth` on the client
+      // covers AS-facing token acquisition, while the introspection request is
+      // built from the resource's own `asCredentials` (`src/core/resource.ts`,
+      // `AuthplaneResource#asCredentials`). Setting only `auth` leaves
+      // introspection unauthenticated and trips the warning in that file.
       const client = await AuthplaneClient.create({
         issuer: activeServer.issuer,
         devMode: true,
-        asCredentials,
+        auth: asCredentials,
       });
       try {
         const resource = client.resource({
           resource: activeServer.resource,
           scopes: [],
+          asCredentials,
           revocationChecker: IntrospectionRevocation.get(),
         });
 
@@ -645,6 +667,19 @@ describe("AuthplaneResource with introspection", () => {
 
         const claims = await resource.verify(token);
         expect(claims.sub).toBe("user_1");
+
+        // The point of this case is the credentials, not the verdict: assert
+        // they were on the introspection request. Without this, the option
+        // being silently dropped is invisible at runtime and only the
+        // excess-property check stands between the test and a false pass.
+        const [authorization] = activeServer.introspectionAuthorization;
+        assert(authorization);
+        expect(authorization).toMatch(/^Basic /);
+        expect(
+          Buffer.from(authorization.slice("Basic ".length), "base64").toString(
+            "utf-8",
+          ),
+        ).toBe("my-rs:s3cret");
       } finally {
         await client.close();
       }
@@ -744,6 +779,7 @@ describe("AuthplaneResource with DPoP-bound tokens", () => {
       const headers = await provider.buildHeadersAsync(dpopMethod, dpopUrl, {
         accessToken: token,
       });
+      assert(headers.DPoP);
 
       const dpopRequest = {
         method: dpopMethod,
@@ -817,9 +853,11 @@ describe("AuthplaneResource with DPoP-bound tokens", () => {
       const headers = await providerB.buildHeadersAsync(dpopMethod, dpopUrl, {
         accessToken: token,
       });
+      assert(headers.DPoP);
+      assert(resource);
 
       await expect(
-        resource!.verify(token, {
+        resource.verify(token, {
           dpopRequest: {
             method: dpopMethod,
             url: dpopUrl,

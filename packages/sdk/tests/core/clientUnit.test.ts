@@ -1,6 +1,5 @@
-import { createServer, type Server } from "node:http";
-import { AddressInfo } from "node:net";
-import { Buffer } from "node:buffer";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 
 import { describe, expect, it } from "vitest";
 import { generateKeyPair, exportJWK } from "jose";
@@ -37,11 +36,13 @@ function okTokenResponse(overrides: Partial<TokenResponse> = {}): Record<string,
 
 describe("AuthplaneClient unit (metadata, basic auth, cache hit)", () => {
   it("covers clientCredentials, exchange, introspect, revoke and cache", async () => {
-    const { privateKey, publicKey } = await generateKeyPair("RS256");
-    const jwk = (await exportJWK(publicKey)) as Record<string, unknown>;
-    jwk.kid = "kid_1";
-    jwk.alg = "RS256";
-    jwk.use = "sig";
+    const { publicKey } = await generateKeyPair("RS256");
+    const jwk: Record<string, unknown> = {
+      ...(await exportJWK(publicKey)),
+      kid: "kid_1",
+      alg: "RS256",
+      use: "sig",
+    };
 
     const asServer = createServer();
     let tokenRequests = 0;
@@ -84,7 +85,6 @@ describe("AuthplaneClient unit (metadata, basic auth, cache hit)", () => {
 
           const grantType = params.get("grant_type") ?? "";
           const scope = params.get("scope") ?? "";
-          const audience = params.get("audience") ?? "";
 
           const tokenResp = (() => {
             if (grantType === "client_credentials") {

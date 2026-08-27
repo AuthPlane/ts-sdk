@@ -473,7 +473,7 @@ Builds an RFC 6750 §3 `WWW-Authenticate` header value. Picks the right scheme (
 - `resourceMetadataUrl?: string` — appended as `resource_metadata="…"` (RFC 9728 §5.1) so clients can discover the AS.
 - `scope?: readonly string[]` — when non-empty, appended as `scope="…"` (RFC 6750), commonly paired with `insufficient_scope`.
 
-**Sanitisation.** All interpolated values (`error.message`, `realm`, `resourceMetadataUrl`, joined `scope`) have CR / LF / `"` / `\` stripped before being spliced into the quoted-string parameter (RFC 9110 §11.4), so a crafted error message cannot terminate the parameter or inject a new header field.
+**Sanitisation.** All interpolated values (`error.message`, `realm`, `resourceMetadataUrl`, joined `scope`) have CR / LF / `"` / `\` stripped before being spliced into the quoted-string parameter (RFC 9110 §11.4), so a crafted error message cannot terminate the parameter or inject a new header field. The rule is exported as `sanitiseHeaderValue(value)` for code that splices values into a challenge through a header builder outside this SDK.
 
 ```ts
 import { httpStatus, wwwAuthenticate, TokenExpired } from "@authplane/sdk/core";

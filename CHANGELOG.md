@@ -7,6 +7,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- `@authplane/hono` — `authplaneOnError()`, a ready-made `app.onError` handler that maps every `AuthplaneError` to its RFC 6750 §3 response, passes a Hono `HTTPException` through unchanged, and by default maps anything else to a `server_error` 500 (with an `onServerError` hook for structured logging). The factory also returns `auth.onError`, preconfigured with the SAME `realm` and `resource_metadata` URL as `auth.bearerAuth`, so the verification-path 401 and a handler-raised 403 cannot drift. It is generic over the app's `Env`, so it attaches to a `Bindings`-typed (Cloudflare Workers) app without a cast. `bearerAuth` now also guarantees the RFC 6750 §3 challenge for an `AuthplaneError` thrown by a guarded downstream route (e.g. `requireScope` raising `InsufficientScope`) with zero application wiring; opt out with `emitDownstreamChallenge: false`. New `realm` option, threaded into both paths.
+- `@authplane/sdk` — `sanitiseHeaderValue` is exported from `@authplane/sdk/core`, so code that splices values into a `WWW-Authenticate` challenge through a header builder outside this SDK applies the same RFC 9110 §11.4 ruleset.
+
+### Changed
+
+- `@authplane/sdk` — the configured `issuer` is treated as an identity and preserved byte-for-byte (RFC 8414 §2/§3.3): the SDK no longer strips a trailing slash from the stored issuer, the token verifier's expected `iss`, or the metadata `issuer` comparison, and an issuer carrying a query or fragment component (including a bare `?` / `#`) is rejected at construction instead of being silently discarded. `.well-known` URL derivation still drops a terminating slash (RFC 8414 §3.1). **Migration**: if your configured issuer differs from your authorization server's published identifier by a trailing slash, correct the configuration — the SDK no longer reconciles them.
+- `@authplane/mcp` — `@modelcontextprotocol/sdk` moved from a direct dependency to a peer dependency (`^1.29.0`), matching how the Hono and NestJS adapters declare their frameworks. The `OAuthTokenVerifier` seam relies on `instanceof` against the SDK's error classes, so the adapter and the host application must resolve to the same copy. On installers that don't auto-install peer dependencies (npm < 7, Yarn classic), add `@modelcontextprotocol/sdk` to your application's dependencies explicitly. Peers don't *guarantee* single-copy resolution either: if every auth failure surfaces as a 500 with no `WWW-Authenticate`, check for a duplicated install (`npm ls @modelcontextprotocol/sdk`).
+
+### Fixed
+
+- `@authplane/mcp` — `tokenVerifier` now works inside the MCP SDK's stock `requireBearerAuth` and other `OAuthTokenVerifier` hosts. `verifyAccessToken` rethrows in the SDK's error taxonomy (`InsufficientScopeError` → 403, `InvalidTokenError` → 401, `ServerError` → 500) instead of raw `AuthplaneError`s, which those hosts classified as 500-with-no-challenge — stalling MCP client discovery, which begins at 401 + `resource_metadata`. Pass `resourceMetadataUrl` to `requireBearerAuth`; the stock middleware only adds the `resource_metadata` hint when configured with it. 401/403 messages are sanitised against `WWW-Authenticate` quoted-string injection (RFC 9110 §11.4), which the SDK's own header builder does not do; the 500 message is a fixed generic string, since the SDK renders it verbatim to unauthenticated clients and core's 5xx messages can carry infrastructure detail. The original error is preserved on `error.cause` in all cases.
+- **Migration** — `@authplane/mcp`: `AuthplaneTokenVerifier.verifyAccessToken` throws MCP SDK error classes again. Code that catches `AuthplaneError` from it should either match on the SDK classes, read `error.cause`, or call `verifyAccessTokenWithDpop`, which keeps the raw `AuthplaneError` contract (and is the only entry point that threads per-request DPoP context). The `bearerAuth` middleware is unaffected.
+
 ## [0.3.0] - 2026-07-24
 
 ### Added

@@ -1,0 +1,115 @@
+name: Conformance Catalog Drift
+
+# Weekly early-warning check: does the LATEST conformance catalog (the default
+# branch of AuthPlane/conformance, unpinned) contain cases the SDK does not yet
+# cover? This runs the catalog-alignment meta-test against the tip of the
+# catalog instead of the SHA pinned in `.conformance-catalog-ref`.
+#
+# It never blocks PR CI — this workflow has no `pull_request` trigger, so it
+# cannot gate a PR. On drift the alignment step FAILS, turning the scheduled run
+# red; that red run is the signal. The "Surface drift" step still runs on failure
+# to emit a warning + a job-summary note — maintainers then add coverage and bump
+# the pin deliberately.
+
+on:
+  schedule:
+    # Mondays at 07:00 UTC.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Clone the catalog's DEFAULT branch (latest, unpinned) — comparing against
+      # the tip is the entire point of this job, so it deliberately does NOT read
+      # `.conformance-catalog-ref`.
+      - name: Check out latest shared conformance catalog (default branch)
+        shell: bash
+        run: |
+          git clone --depth=1 \
+            https://github.com/AuthPlane/conformance.git \
+            "$RUNNER_TEMP/conformance"
+          # Publish one spelling of the path for the rest of the job. It used to
+          # appear twice in two syntaxes, agreeing only by inspection — a rename
+          # had to land in both or the guard would check a different file than
+          # the test reads. (runner.temp is not available in a job-level env:.)
+          echo "CATALOG=$RUNNER_TEMP/conformance/oauth-sdk-conformance-catalog.yaml" >> "$GITHUB_ENV"
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The alignment test fails in two ways that the report step below cannot
+      # tell apart: a real drift (a catalog case with no coverage) and a missing
+      # catalog file, which it also raises as an Error. Reporting the second as
+      # drift would send someone hunting for uncovered cases when the clone
+      # simply did not land. Assert the file exists first, so that failure mode
+      # is labelled at its own step and never reaches the drift branch.
+      - name: Verify the catalog was fetched
+        shell: bash
+        run: |
+          if [[ ! -f "$CATALOG" ]]; then
+            echo "::error::The conformance catalog is not at $CATALOG — the clone step did not produce it. This is a harness problem, not catalog drift."
+            exit 1
+          fi
+
+      - name: Check catalog alignment against the latest catalog
+        id: align
+        env:
+          CONFORMANCE_CATALOG_PATH: ${{ env.CATALOG }}
+        run: npm run test -w @authplane/sdk -- conformance-tests/catalogAlignment.test.ts
+
+      # Three-way, not two. `outcome` is success / failure / cancelled / skipped,
+      # and only `failure` means drift: if any earlier step fails, `align` is
+      # skipped, and a `!= success` test would announce "drift detected" for a
+      # run where the alignment never executed — sending the reader to hunt for
+      # uncovered case ids that were never looked for. That covers a failed
+      # catalog clone as well as a missing file, which is why the guard above is
+      # only a clearer error and not the fix.
+      - name: Surface drift
+        if: always()
+        shell: bash
+        run: |
+          case "${{ steps.align.outcome }}" in
+            success)
+              {
+                echo "### Conformance catalog: in sync ✅"
+                echo ""
+                echo "The SDK covers every case in the latest catalog (default branch)."
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            failure)
+              echo "::warning::Conformance catalog drift — the latest catalog (default branch of AuthPlane/conformance) has cases the SDK does not yet cover. Add the missing conformanceCase(...) coverage, then bump .conformance-catalog-ref to the new SHA."
+              {
+                echo "### Conformance catalog: drift detected ⚠️"
+                echo ""
+                echo "The latest catalog (default branch) contains cases not yet covered by the SDK conformance suite."
+                echo ""
+                echo "**Next steps:**"
+                echo "1. Inspect the alignment-test failure in the job log above for the missing case ids."
+                echo "2. Add the corresponding \`conformanceCase(...)\` coverage under \`packages/sdk/\`."
+                echo "3. Bump \`.conformance-catalog-ref\` to the new catalog SHA so CI pins the adopted cases."
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "::warning::The alignment check did not run (outcome: ${{ steps.align.outcome }}). An earlier step failed — most likely the catalog-file guard, or the catalog clone or the install. This is a harness problem, not catalog drift; read the failing step above before touching .conformance-catalog-ref."
+              {
+                echo "### Conformance catalog: check did not run ⚠️"
+                echo ""
+                echo "The alignment step was \`${{ steps.align.outcome }}\`, so drift was never evaluated."
+                echo "Look at the first failing step in the job — this says nothing about the catalog."
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac

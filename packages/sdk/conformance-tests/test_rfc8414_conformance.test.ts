@@ -46,6 +46,22 @@ conformanceCase(
 			await server.close();
 		}
 	},
+	{
+		level: "partial",
+		gaps: [
+			"The catalog's variant — configured issuer without a trailing slash, " +
+				"metadata issuer with one — is not exercised. It needs a mock AS " +
+				"whose metadata issuer is its own origin plus a slash, and " +
+				"metadataOverrides is a static record fixed before the port is " +
+				"known, so expressing it means changing a shared helper.",
+		],
+		note:
+			"Covers the different-host mismatch only. The behaviour is correct: " +
+			"the comparison is fetching/documentCache.ts:287-290 " +
+			"(issuer !== this.expectedIssuer), reached through the expectedIssuer " +
+			"passed at client.ts:137 — and client.ts:86-93 is why the stored value " +
+			"is not normalized before it gets there (RFC 8414 §3.3).",
+	},
 );
 
 conformanceCase(
@@ -323,7 +339,7 @@ conformanceCase(
 			"https://api.example.com",
 			["read:data"],
 			{ dpopSigningAlgValuesSupported: ["ES256", "RS256"] },
-		) as Record<string, unknown>;
+		);
 		expect(prm).toHaveProperty("dpop_signing_alg_values_supported");
 	},
 );
@@ -358,6 +374,14 @@ conformanceCase(
 			[
 				"https://api.example.com/v2/mcp",
 				"/.well-known/oauth-protected-resource/v2/mcp",
+			],
+			// A resource published with a trailing slash serves its metadata at the
+			// slash-less well-known path, so this row and the "/mcp" one above must
+			// derive the same document. The slash is dropped at derivation only —
+			// the identifier itself is still compared byte-for-byte elsewhere.
+			[
+				"https://api.example.com/mcp/",
+				"/.well-known/oauth-protected-resource/mcp",
 			],
 		];
 		for (const [resource, expectedPath] of cases) {

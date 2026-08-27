@@ -1,5 +1,5 @@
-import { createServer, type IncomingMessage, type Server } from "node:http";
-import { AddressInfo } from "node:net";
+import { createServer, type IncomingMessage } from "node:http";
+import type { AddressInfo } from "node:net";
 
 import { describe, expect, it } from "vitest";
 
@@ -75,7 +75,7 @@ describe("fetching/ssrf: safe fetch helpers", () => {
       received = {
         host: String(req.headers.host ?? ""),
         contentType: String(req.headers["content-type"] ?? ""),
-        accept: String(req.headers["accept"] ?? ""),
+        accept: String(req.headers.accept ?? ""),
         xTest: String(req.headers["x-test"] ?? ""),
         body: await readBody(req),
       };

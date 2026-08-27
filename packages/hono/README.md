@@ -46,7 +46,7 @@ serve({ fetch: app.fetch, port: 3000 });
 
 ## Learn more
 
-- **[User Guide](docs/user-guide.md)** — complete reference: options, scope enforcement, `onError` bridging, DPoP, introspection, error handling, runtime portability.
+- **[User Guide](docs/user-guide.md)** — complete reference: options, scope enforcement, `app.onError(authplaneOnError())`, DPoP, introspection, error handling, runtime portability.
 - **[Demo](demo/README.md)** — runnable multi-route calculator (`./demo/run.sh`).
 - **[`@authplane/sdk`](../sdk)** — the underlying OAuth/JWT primitives.
 

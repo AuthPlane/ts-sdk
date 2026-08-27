@@ -358,10 +358,14 @@ describe("AuthplaneExceptionFilter — Fastify defensive fallback", () => {
 
 describe("AuthplaneExceptionFilter — @Catch contract", () => {
 	it("claims AuthplaneError, not raw Error", () => {
+		// `@Catch()` stores exception *classes*, so the element type is a
+		// constructor, not `unknown`. It cannot be `Function` — biome's
+		// noBannedTypes rejects that — so this is the top constructor type,
+		// which keeps "these are classes" while staying lint-clean.
 		const catchMetadata = Reflect.getMetadata?.(
 			"__filterCatchExceptions__",
 			AuthplaneExceptionFilter,
-		) as readonly Function[] | undefined;
+		) as readonly (abstract new (...args: never[]) => unknown)[] | undefined;
 		expect(catchMetadata).toBeDefined();
 		expect(catchMetadata).toContain(AuthplaneError);
 		// Importantly, NOT raw Error — that would swallow every HttpException

@@ -1,0 +1,10 @@
+{
+	"//": "Shared base for the per-package tsconfig.test.json files. It extends tsconfig.base.json — the same base every package's tsconfig.json extends — so test, demo and config files are checked under exactly the strictness src gets (strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes, verbatimModuleSyntax). Only the emit settings differ: these projects exist to report errors, not to produce output, and composite/declaration are incompatible with that.",
+	"extends": "./tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"composite": false,
+		"declaration": false,
+		"incremental": false
+	}
+}

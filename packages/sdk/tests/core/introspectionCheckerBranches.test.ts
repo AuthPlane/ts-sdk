@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 
 import { VerifiedClaims } from "../../src/core/claims.js";

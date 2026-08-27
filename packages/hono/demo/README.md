@@ -80,15 +80,16 @@ HTTP Client ──Bearer JWT──► server.ts (port 8080)
                                 └─ requireScope(c, "tools/add")
                                      • Reads auth info from c.get("auth")
                                      • Throws core InsufficientScope if missing
-                                       → app.onError bridges to RFC 6750 403
+                                       → app.onError(auth.onError) maps it
+                                         to an RFC 6750 403
 ```
 
 ## Key patterns shown
 
 **`authplaneHonoAuth()`** — wires up the verifier, bearer auth middleware, and Protected Resource Metadata in one call. The `scopes` list advertises supported scopes in the Protected Resource Metadata (`/.well-known/oauth-protected-resource/...`) and, by default, is also used as the `requiredScopes` list for the auth middleware. This mirrors the Express `@authplane/mcp` adapter.
 
-**`requireScope(c, scope)`** — call at the top of any handler to enforce per-route scope. If the token is missing the scope the helper throws core `InsufficientScope`, which the `app.onError` hook translates to a 403 with a standards-compliant `WWW-Authenticate: Bearer error="insufficient_scope"` header.
+**`requireScope(c, scope)`** — call at the top of any handler to enforce per-route scope. If the token is missing the scope the helper throws core `InsufficientScope`, which `app.onError(auth.onError)` translates to a 403 with a standards-compliant `WWW-Authenticate: Bearer error="insufficient_scope"` header.
 
-**`app.onError`** — centralised RFC 6750 error bridge. The middleware already handles its own errors (invalid tokens become 401 with `WWW-Authenticate` set), but errors thrown *from inside a handler* (like `requireScope`) escape into Hono's error hook. The demo funnels any core `AuthplaneError` through `httpStatus()` + `wwwAuthenticate()`.
+**`app.onError(auth.onError)`** — the shipped, centralised RFC 6750 error handler. `auth.onError` is a ready-bound `authplaneOnError()` carrying the SAME `realm` and `resource_metadata` URL the factory wired into `bearerAuth`, so the verification-path 401 and a handler-raised 403 emit an identical challenge instead of drifting. The middleware already handles its own errors (invalid tokens become 401 with `WWW-Authenticate` set), but an `InsufficientScope` thrown *from inside a handler* (like `requireScope`) escapes into Hono's error hook. The handler funnels every core `AuthplaneError` through `httpStatus()` + `wwwAuthenticate()` and maps anything else to a clean `server_error` 500 (fixed description, original error logged server-side) — no hand-written bridge required. (`bearerAuth` also guards downstream throws on its own, so the challenge is guaranteed even with no `onError` installed.)
 
 **`IntrospectionRevocation`** — enables RFC 7662 token introspection using the resource URL as `clientId` and the admin-provisioned secret. Without it, revoked tokens would remain accepted until their `exp`.

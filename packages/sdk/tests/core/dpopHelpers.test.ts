@@ -124,7 +124,7 @@ describe("dpop helpers", () => {
     const nowSeconds = Math.floor(Date.now() / 1000);
 
     const { privateKey, publicKey } = await generateKeyPair("ES256");
-    const publicJwk = (await exportJWK(publicKey)) as NonNullable<unknown> as any;
+    const publicJwk = await exportJWK(publicKey);
 
     const expectedJkt = await calculateJwkThumbprint(publicJwk);
 
@@ -183,7 +183,7 @@ describe("dpop helpers", () => {
 
     const nowSeconds = Math.floor(Date.now() / 1000);
     const { privateKey, publicKey } = await generateKeyPair("ES256");
-    const publicJwk = (await exportJWK(publicKey)) as NonNullable<unknown> as any;
+    const publicJwk = await exportJWK(publicKey);
 
     const method = "GET";
     const url = "https://api.example.com/resource";
@@ -262,7 +262,7 @@ describe("dpop helpers", () => {
 
     const nowSeconds = Math.floor(Date.now() / 1000);
     const { privateKey, publicKey } = await generateKeyPair("ES256");
-    const publicJwk = (await exportJWK(publicKey)) as NonNullable<unknown> as any;
+    const publicJwk = await exportJWK(publicKey);
 
     const expectedJkt = await calculateJwkThumbprint(publicJwk);
 
@@ -307,7 +307,7 @@ describe("dpop helpers", () => {
 
     const nowSeconds = Math.floor(Date.now() / 1000);
     const { privateKey, publicKey } = await generateKeyPair("ES256");
-    const publicJwk = (await exportJWK(publicKey)) as NonNullable<unknown> as any;
+    const publicJwk = await exportJWK(publicKey);
 
     const expectedJkt = await calculateJwkThumbprint(publicJwk);
 
@@ -351,7 +351,7 @@ describe("dpop helpers", () => {
 
     const nowSeconds = Math.floor(Date.now() / 1000);
     const { privateKey, publicKey } = await generateKeyPair("ES256");
-    const publicJwk = (await exportJWK(publicKey)) as NonNullable<unknown> as any;
+    const publicJwk = await exportJWK(publicKey);
 
     const expectedJkt = await calculateJwkThumbprint(publicJwk);
 

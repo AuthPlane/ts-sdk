@@ -25,11 +25,22 @@ jobs:
       # trust for a public repo (AuthPlane/conformance), no third-party action
       # surface to SHA-pin. Keeps the catalog outside the workspace so
       # release.yml's `git add -A` cannot stage it as an embedded gitlink.
+      #
+      # The pinned SHA is single-sourced from `.conformance-catalog-ref` at the
+      # repo root (read here after the checkout above), so ci.yml and release.yml
+      # can never disagree. Bump that file — together with the SDK-side
+      # conformance coverage — to adopt new catalog cases; a catalog change alone
+      # can never break CI. Source: github.com/AuthPlane/conformance.
       - name: Check out shared conformance catalog (outside workspace)
         run: |
-          git -c advice.detachedHead=false clone --depth=1 \
-            https://github.com/AuthPlane/conformance.git \
-            "${{ runner.temp }}/conformance"
+          CONFORMANCE_CATALOG_REF="$(cat "$GITHUB_WORKSPACE/.conformance-catalog-ref")"
+          git init -q "${{ runner.temp }}/conformance"
+          grep -Eq '^[0-9a-f]{40}$' <<<"$CONFORMANCE_CATALOG_REF" \
+            || { echo "::error::.conformance-catalog-ref must be a 40-hex commit SHA"; exit 1; }
+          git -C "${{ runner.temp }}/conformance" fetch --depth=1 \
+            https://github.com/AuthPlane/conformance.git "$CONFORMANCE_CATALOG_REF" \
+            || { echo "::error::Pinned conformance catalog ref $CONFORMANCE_CATALOG_REF is unreachable"; exit 1; }
+          git -C "${{ runner.temp }}/conformance" checkout -q FETCH_HEAD
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import { generateKeyPair, exportJWK } from "jose";
 
 import { describe, expect, it } from "vitest";
@@ -20,10 +20,12 @@ async function startDiscoveryAndJwksServer(
   },
 ): Promise<{ server: Server; base: string }> {
   const { publicKey } = await generateKeyPair("RS256");
-  const jwk = (await exportJWK(publicKey)) as Record<string, unknown>;
-  jwk.kid = "kid_1";
-  jwk.alg = "RS256";
-  jwk.use = "sig";
+  const jwk: Record<string, unknown> = {
+    ...(await exportJWK(publicKey)),
+    kid: "kid_1",
+    alg: "RS256",
+    use: "sig",
+  };
 
   const server = createServer(async (req, res) => {
     try {

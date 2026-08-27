@@ -1,19 +1,29 @@
-name: Lint workflows
+name: Release tooling
 
 # Catches workflow YAML / shell-in-`run:` regressions at PR time so a
 # typo can't reach a release tag and surface only when a publish run
-# fails. Scoped to changes under `.github/workflows/**` to keep CI
-# overhead off unrelated PRs.
+# fails. The shell scripts at the top of scripts/ are in the same category
+# — a break in them surfaces only when someone reaches for them after a
+# release, which is the worst moment to discover it — so they are linted
+# and tested here too.
+#
+# Scoped to scripts/*.sh deliberately: this job runs shellcheck and a bash
+# test suite, so it has nothing to offer the .mjs files — scripts/release/,
+# which holds what the cut and the changelog guard depend on, and
+# scripts/sync-package-files.mjs at the top level. Triggering on them would
+# be coverage this job does not provide; both are uncovered either way.
 
 on:
   pull_request:
     paths:
       - ".github/workflows/**"
+      - "scripts/*.sh"
   push:
     branches:
       - main
     paths:
       - ".github/workflows/**"
+      - "scripts/*.sh"
 
 permissions:
   contents: read
@@ -62,3 +72,13 @@ jobs:
       # job fails loudly instead of silently degrading.
       - name: Run actionlint
         run: actionlint -color -shellcheck=shellcheck
+
+      - name: Shellcheck the release scripts
+        run: shellcheck scripts/*.sh
+
+      # backport-fixes.sh accepts a branch or a tag as --from, and only the
+      # branch form has a remote-tracking ref. The tag form is what the release
+      # flow tells you to use once release.yml has deleted the branch, so it is
+      # the form least likely to be exercised before it is needed.
+      - name: Test backport-fixes.sh
+        run: scripts/backport-fixes.test.sh

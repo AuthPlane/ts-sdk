@@ -1,9 +1,9 @@
 version: 2
 
 updates:
-  # npm workspaces (root package.json declares three workspaces; dependabot
+  # npm workspaces (root package.json declares five workspaces; dependabot
   # resolves the full graph via the root entry, so a single npm ecosystem
-  # block covers all three workspace packages).
+  # block covers all five workspace packages).
   - package-ecosystem: npm
     directory: /
     schedule:

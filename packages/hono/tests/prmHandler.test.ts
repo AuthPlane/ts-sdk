@@ -10,6 +10,7 @@ function buildMetadata(
 	return {
 		resource: "https://api.example.com/mcp",
 		authorization_servers: ["https://auth.example.com"],
+		resource_signing_alg_values_supported: ["RS256", "ES256"],
 		scopes_supported: ["tools/add", "tools/echo"],
 		bearer_methods_supported: ["header"],
 		dpop_signing_alg_values_supported: ["RS256"],

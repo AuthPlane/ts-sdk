@@ -2,11 +2,14 @@ import {
 	AuthplaneClient,
 	type AuthplaneResource,
 	type DPoPReplayStore,
+	TokenExpired,
 	VerifiedClaims,
 } from "@authplane/sdk/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { authplaneHonoAuth } from "../src/authplaneHonoAuth.js";
+import { requireScope } from "../src/requireScope.js";
+import type { HonoAuthVariables } from "../src/types.js";
 
 function buildClaims(
 	overrides: Partial<ConstructorParameters<typeof VerifiedClaims>[0]> = {},
@@ -320,6 +323,146 @@ describe("authplaneHonoAuth", () => {
 		expect(response.status).toBe(401);
 		expect(response.headers.get("WWW-Authenticate")).toContain(
 			'resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp"',
+		);
+	});
+
+	it("wires the SAME realm + resource_metadata into bearerAuth (401) and auth.onError (403) so the two challenges cannot drift", async () => {
+		const realm = "https://api.example.com/mcp";
+		const prmUrl =
+			"https://api.example.com/.well-known/oauth-protected-resource/mcp";
+		const resource = mockResource({
+			prmDocumentUrl: prmUrl,
+			// Token clears the global scope gate (tools/read) but lacks the
+			// per-route scope the handler demands (tools/add).
+			verify: vi.fn(async () => buildClaims({ scopes: ["tools/read"] })),
+		});
+		const client = mockClient(resource);
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(client);
+
+		const auth = await authplaneHonoAuth({
+			issuer: "https://auth.example.com",
+			resource: "https://api.example.com/mcp",
+			scopes: ["tools/read"],
+			realm,
+		});
+
+		const { Hono } = await import("hono");
+		const app = new Hono<{ Variables: HonoAuthVariables }>();
+		app.use("/mcp", auth.bearerAuth);
+		app.post("/mcp", (c) => {
+			requireScope(c, "tools/add");
+			return c.json({ ok: true });
+		});
+		app.onError(auth.onError);
+
+		// 401 comes from the bearerAuth verification path.
+		const unauthenticated = await app.request("/mcp", { method: "POST" });
+		expect(unauthenticated.status).toBe(401);
+		const challenge401 = unauthenticated.headers.get("WWW-Authenticate");
+
+		// 403 comes from auth.onError catching the handler-raised InsufficientScope.
+		const forbidden = await app.request("/mcp", {
+			method: "POST",
+			headers: { Authorization: "Bearer valid_jwt" },
+		});
+		expect(forbidden.status).toBe(403);
+		const challenge403 = forbidden.headers.get("WWW-Authenticate");
+
+		for (const challenge of [challenge401, challenge403]) {
+			expect(challenge).toContain(`realm="${realm}"`);
+			expect(challenge).toContain(`resource_metadata="${prmUrl}"`);
+		}
+	});
+
+	it("honors emitDownstreamChallenge: false forwarded through the factory (app keeps control of the downstream response)", async () => {
+		const resource = mockResource({
+			verify: vi.fn(async () => buildClaims({ scopes: ["tools/read"] })),
+		});
+		const client = mockClient(resource);
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(client);
+
+		const auth = await authplaneHonoAuth({
+			issuer: "https://auth.example.com",
+			resource: "https://api.example.com/mcp",
+			scopes: ["tools/read"],
+			emitDownstreamChallenge: false,
+		});
+
+		const { Hono } = await import("hono");
+		const app = new Hono<{ Variables: HonoAuthVariables }>();
+		app.use("/mcp", auth.bearerAuth);
+		app.post("/mcp", (c) => {
+			requireScope(c, "tools/add");
+			return c.json({ ok: true });
+		});
+		// The app's own handler shapes the downstream response. With the middleware
+		// guard opted out, bearerAuth must NOT overwrite it with a challenge.
+		app.onError((_err, c) => c.json({ handled: true }, 418));
+
+		const response = await app.request("/mcp", {
+			method: "POST",
+			headers: { Authorization: "Bearer valid_jwt" },
+		});
+
+		expect(response.status).toBe(418);
+		expect(response.headers.get("WWW-Authenticate")).toBeNull();
+		await expect(response.json()).resolves.toEqual({ handled: true });
+	});
+
+	it("exercises auth.onError directly: a handler-thrown AuthplaneError maps to its RFC 6750 challenge", async () => {
+		const prmUrl =
+			"https://api.example.com/.well-known/oauth-protected-resource/mcp";
+		const resource = mockResource({ prmDocumentUrl: prmUrl });
+		const client = mockClient(resource);
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(client);
+
+		const auth = await authplaneHonoAuth({
+			issuer: "https://auth.example.com",
+			resource: "https://api.example.com/mcp",
+			realm: "https://api.example.com/mcp",
+		});
+
+		const { Hono } = await import("hono");
+		const app = new Hono<{ Variables: HonoAuthVariables }>();
+		app.get("/", () => {
+			throw new TokenExpired("Token has expired");
+		});
+		app.onError(auth.onError);
+
+		const response = await app.request("/");
+		expect(response.status).toBe(401);
+		expect(response.headers.get("WWW-Authenticate")).toBe(
+			'Bearer realm="https://api.example.com/mcp", error="invalid_token", error_description="Token has expired", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp"',
+		);
+	});
+
+	it("auth.onError typechecks and runs on a Bindings-typed (Workers) app via the generic factory", async () => {
+		type Env = { API_KEY: string };
+		const resource = mockResource();
+		const client = mockClient(resource);
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(client);
+
+		// Instantiate the factory at the Workers Env so auth.onError is
+		// ErrorHandler<{ Bindings; Variables }> and attaches without a cast.
+		const auth = await authplaneHonoAuth<{
+			Bindings: Env;
+			Variables: HonoAuthVariables;
+		}>({
+			issuer: "https://auth.example.com",
+			resource: "https://api.example.com/mcp",
+		});
+
+		const { Hono } = await import("hono");
+		const app = new Hono<{ Bindings: Env; Variables: HonoAuthVariables }>();
+		app.get("/", () => {
+			throw new TokenExpired("Token has expired");
+		});
+		app.onError(auth.onError);
+
+		const response = await app.request("/");
+		expect(response.status).toBe(401);
+		expect(response.headers.get("WWW-Authenticate")).toContain(
+			'error="invalid_token"',
 		);
 	});
 });

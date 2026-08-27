@@ -3,7 +3,6 @@ import {
   AuthplaneClient,
   type AuthplaneResource,
   ConsentRequiredError,
-  type DPoPReplayStore,
   DPoPReplayDetected,
   InsufficientScope,
   TokenExpired,
@@ -464,7 +463,7 @@ describe("authplaneFastMcpAuth", () => {
       notBefore: 0,
       raw: { sub: "user_123" },
     });
-    const verify = vi.fn(async () => claims);
+    const verify = vi.fn<AuthplaneResource["verify"]>(async () => claims);
     const mockResource = {
       verify,
       prmResponse: vi.fn(() => ({
@@ -528,7 +527,7 @@ describe("authplaneFastMcpAuth", () => {
       notBefore: 0,
       raw: { sub: "user_123" },
     });
-    const verify = vi.fn(async () => claims);
+    const verify = vi.fn<AuthplaneResource["verify"]>(async () => claims);
     const mockResource = {
       verify,
       prmResponse: vi.fn(() => ({
@@ -560,9 +559,7 @@ describe("authplaneFastMcpAuth", () => {
       }) as never,
     );
 
-    const passedDpop = (verify.mock.calls[0]?.[1] as
-      | { dpopRequest?: { url: string } }
-      | undefined)?.dpopRequest;
+    const passedDpop = verify.mock.calls[0]?.[1]?.dpopRequest;
     expect(passedDpop?.url).toBe("https://api.example.com/mcp");
     expect(passedDpop?.url).not.toContain("localhost");
   });
@@ -583,7 +580,7 @@ describe("authplaneFastMcpAuth", () => {
       notBefore: 0,
       raw: { sub: "user_123" },
     });
-    const verify = vi.fn(async () => claims);
+    const verify = vi.fn<AuthplaneResource["verify"]>(async () => claims);
     const mockResource = {
       verify,
       prmResponse: vi.fn(() => ({
@@ -643,7 +640,7 @@ describe("authplaneFastMcpAuth", () => {
       notBefore: 0,
       raw: { sub: "user_123" },
     });
-    const verify = vi.fn(async () => claims);
+    const verify = vi.fn<AuthplaneResource["verify"]>(async () => claims);
     const mockResource = {
       verify,
       prmResponse: vi.fn(() => ({
@@ -708,7 +705,7 @@ describe("authplaneFastMcpAuth", () => {
       notBefore: 0,
       raw: { sub: "user_123" },
     });
-    const verify = vi.fn(async () => claims);
+    const verify = vi.fn<AuthplaneResource["verify"]>(async () => claims);
     const mockResource = {
       verify,
       prmResponse: vi.fn(() => ({
@@ -740,9 +737,7 @@ describe("authplaneFastMcpAuth", () => {
       }) as never,
     );
 
-    const passedDpop = (verify.mock.calls[0]?.[1] as
-      | { dpopRequest?: { url: string } }
-      | undefined)?.dpopRequest;
+    const passedDpop = verify.mock.calls[0]?.[1]?.dpopRequest;
     expect(passedDpop?.url).toBe("https://api.example.com/mcp");
     expect(passedDpop?.url).not.toContain(":443");
   });
@@ -763,7 +758,7 @@ describe("authplaneFastMcpAuth", () => {
       notBefore: 0,
       raw: { sub: "user_123" },
     });
-    const verify = vi.fn(async () => claims);
+    const verify = vi.fn<AuthplaneResource["verify"]>(async () => claims);
     const mockResource = {
       verify,
       prmResponse: vi.fn(() => ({
@@ -976,7 +971,7 @@ describe("authplaneFastMcpAuth", () => {
       notBefore: 0,
       raw: { sub: "user_123" },
     });
-    const verify = vi.fn(async () => claims);
+    const verify = vi.fn<AuthplaneResource["verify"]>(async () => claims);
     const mockResource = {
       verify,
       prmResponse: vi.fn(() => ({
@@ -1043,7 +1038,7 @@ describe("authplaneFastMcpAuth", () => {
       notBefore: 0,
       raw: { sub: "user_123" },
     });
-    const verify = vi.fn(async () => claims);
+    const verify = vi.fn<AuthplaneResource["verify"]>(async () => claims);
     const mockResource = {
       verify,
       prmResponse: vi.fn(() => ({
