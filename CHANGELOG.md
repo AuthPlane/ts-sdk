@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-27
+
 ### Added
 
 - `@authplane/hono` — `authplaneOnError()`, a ready-made `app.onError` handler that maps every `AuthplaneError` to its RFC 6750 §3 response, passes a Hono `HTTPException` through unchanged, and by default maps anything else to a `server_error` 500 (with an `onServerError` hook for structured logging). The factory also returns `auth.onError`, preconfigured with the SAME `realm` and `resource_metadata` URL as `auth.bearerAuth`, so the verification-path 401 and a handler-raised 403 cannot drift. It is generic over the app's `Env`, so it attaches to a `Bindings`-typed (Cloudflare Workers) app without a cast. `bearerAuth` now also guarantees the RFC 6750 §3 challenge for an `AuthplaneError` thrown by a guarded downstream route (e.g. `requireScope` raising `InsufficientScope`) with zero application wiring; opt out with `emitDownstreamChallenge: false`. New `realm` option, threaded into both paths.
