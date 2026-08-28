@@ -51,17 +51,17 @@
 	},
 	"peerDependencies": {
 		"@authplane/sdk": "^0.4.1-dev.0",
-		"hono": "^4.12.21"
+		"hono": "^4.13.4"
 	},
 	"devDependencies": {
 		"@authplane/sdk": "^0.4.1-dev.0",
 		"@hono/node-server": "^1.14.0",
 		"@types/node": "^24.3.0",
-		"@vitest/coverage-v8": "4.1.5",
+		"@vitest/coverage-v8": "4.1.11",
 		"dotenv": "^17.3.1",
-		"hono": "^4.12.21",
-		"tsx": "^4.20.6",
+		"hono": "^4.13.4",
+		"tsx": "^4.23.12",
 		"typescript": "^5.6.3",
-		"vitest": "4.1.5"
+		"vitest": "4.1.11"
 	}
 }
