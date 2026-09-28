@@ -336,15 +336,20 @@ export async function verifyDpopProof(options: {
 		throw new InvalidDPoPProof("DPoP proof htu mismatch.");
 	}
 
-	// RFC 9449 §8: resource servers MAY issue their own DPoP-Nonce challenges.
-	// When a nonce policy is configured, proofs carrying a different or
-	// missing `nonce` claim MUST be rejected.
+	// RFC 9449 §9: resource servers MAY issue their own DPoP-Nonce challenges
+	// (§8 is the nonce the authorization server supplies). When a nonce policy
+	// is configured, proofs carrying a different or missing `nonce` claim MUST
+	// be rejected.
+	//
+	// The message names neither nonce. `expectedNonce` is the value the
+	// resource server just issued, and this message reaches the caller inside
+	// the `WWW-Authenticate` challenge on the 401 path — handing it back would
+	// let whoever provoked the mismatch mint an accepted proof without ever
+	// making the round trip the §9 nonce exists to prove.
 	if (options.expectedNonce) {
 		const actualNonce = typeof payload.nonce === "string" ? payload.nonce : "";
 		if (actualNonce !== options.expectedNonce) {
-			throw new InvalidDPoPProof(
-				`DPoP proof nonce mismatch: expected '${options.expectedNonce}', got '${actualNonce}'`,
-			);
+			throw new InvalidDPoPProof("DPoP proof nonce mismatch");
 		}
 	}
 

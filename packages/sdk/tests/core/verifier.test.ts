@@ -10,7 +10,7 @@ import {
   type JWK,
   type KeyLike,
 } from "jose";
-import { afterAll, assert, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, assert, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   AuthplaneClient,
@@ -876,7 +876,12 @@ describe("AuthplaneResource with DPoP-bound tokens", () => {
 });
 
 describe("AuthplaneResource with IntrospectionRevocation without asCredentials", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("warns and still validates token when AS introspection returns active=true", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const server = await startAuthServer({ introspectionActive: true });
     try {
       const client = await AuthplaneClient.create({ issuer: server.issuer, devMode: true });
@@ -888,6 +893,16 @@ describe("AuthplaneResource with IntrospectionRevocation without asCredentials",
           // Intentionally omit asCredentials => triggers warning branch.
         });
 
+        // The construction-time warning has to name the consequence: under
+        // authserver >= 0.1.2 the unauthenticated path answers active: false,
+        // so an operator reading the log learns every token will be rejected.
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        const [message] = warnSpy.mock.calls[0] as [string];
+        expect(message).toContain("unauthenticated");
+        expect(message).toContain("authserver >= 0.1.2");
+        expect(message).toContain("active: false");
+        expect(message).toContain("every token will be rejected");
+
         const token = await mintToken({
           privateKey: server.privateKey,
           issuer: server.issuer,
@@ -896,6 +911,134 @@ describe("AuthplaneResource with IntrospectionRevocation without asCredentials",
 
         const claims = await resource.verify(token);
         expect(claims.sub).toBe("user_1");
+        expect(server.introspectionAuthorization).toEqual([undefined]);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+
+  it("warns when an IntrospectionConfig carries a clientId but an empty clientSecret", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const server = await startAuthServer({ introspectionActive: true });
+    try {
+      const client = await AuthplaneClient.create({ issuer: server.issuer, devMode: true });
+      try {
+        client.resource({
+          resource: server.resource,
+          scopes: [],
+          revocationChecker: { clientId: "rs-client", clientSecret: "" },
+        });
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(String(warnSpy.mock.calls[0]?.[0])).toContain("authserver >= 0.1.2");
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+
+  it("does not warn at construction when asCredentials are complete", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const server = await startAuthServer({ introspectionActive: true });
+    try {
+      const client = await AuthplaneClient.create({ issuer: server.issuer, devMode: true });
+      try {
+        client.resource({
+          resource: server.resource,
+          scopes: [],
+          asCredentials: { clientId: "rs-client", clientSecret: "s3cret" },
+          revocationChecker: IntrospectionRevocation.get(),
+        });
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+});
+
+describe("AuthplaneResource introspection ownership warning", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("logs the runtime-client guidance once when active=false follows a valid JWT", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const server = await startAuthServer({ introspectionActive: false });
+    try {
+      const client = await AuthplaneClient.create({ issuer: server.issuer, devMode: true });
+      try {
+        const resource = client.resource({
+          resource: server.resource,
+          scopes: [],
+          asCredentials: { clientId: "rs-client", clientSecret: "s3cret" },
+          revocationChecker: IntrospectionRevocation.get(),
+        });
+        // Credentials are complete, so nothing was logged at construction and
+        // every warning below is the ownership one.
+        expect(warnSpy).not.toHaveBeenCalled();
+
+        const token = await mintToken({
+          privateKey: server.privateKey,
+          issuer: server.issuer,
+          audience: server.resource,
+        });
+
+        await expect(resource.verify(token)).rejects.toBeInstanceOf(TokenRevoked);
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        const [message] = warnSpy.mock.calls[0] as [string];
+        expect(message).toContain("jti=jti_1");
+        expect(message).toContain("did not recognise this resource server as the token's owner");
+        expect(message).toContain("runtime-client");
+        expect(message).toContain(
+          "authserver admin resource runtime-client add --client-id <rs-client-id> --slug <resource-slug>",
+        );
+
+        // Rate-limited: a second rejection on the same resource is silent.
+        await expect(resource.verify(token)).rejects.toBeInstanceOf(TokenRevoked);
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+
+  it("does not log the ownership guidance for a custom RevocationChecker", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const server = await startAuthServer();
+    try {
+      const client = await AuthplaneClient.create({ issuer: server.issuer, devMode: true });
+      try {
+        const resource = client.resource({
+          resource: server.resource,
+          scopes: [],
+          revocationChecker: async () => true,
+        });
+
+        const token = await mintToken({
+          privateKey: server.privateKey,
+          issuer: server.issuer,
+          audience: server.resource,
+        });
+
+        await expect(resource.verify(token)).rejects.toBeInstanceOf(TokenRevoked);
+        expect(warnSpy).not.toHaveBeenCalled();
       } finally {
         await client.close();
       }

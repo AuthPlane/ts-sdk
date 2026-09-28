@@ -46,11 +46,14 @@ export interface BearerAuthOptions {
 	readonly resourceMetadataUrl?: string;
 	/**
 	 * Origin (scheme + authority) of the configured resource. Used as the
-	 * trusted source of truth for the DPoP `htu` URL — must be
-	 * `new URL(options.resource).origin`. The middleware never reads
-	 * `X-Forwarded-*` or `Host` to compute `htu`: those are attacker-controlled
-	 * inputs in many deployments and letting them steer `htu` would neuter
-	 * RFC 9449 cross-endpoint anti-replay.
+	 * trusted source of truth for the DPoP `htu` URL — build it as
+	 * `` `${u.protocol}//${u.host}` `` from `new URL(options.resource)`, not
+	 * `URL.origin`: `origin` is the literal string `"null"` for a non-special
+	 * scheme such as `mcp:`, which the resource-indicator gate accepts, and a
+	 * `"null"`-anchored `htu` fails verification for every DPoP-bound request.
+	 * The middleware never reads `X-Forwarded-*` or `Host` to compute `htu`:
+	 * those are attacker-controlled inputs in many deployments and letting
+	 * them steer `htu` would neuter RFC 9449 cross-endpoint anti-replay.
 	 */
 	readonly resourceOrigin: string;
 	/**

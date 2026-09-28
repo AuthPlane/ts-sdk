@@ -44,7 +44,7 @@ app.listen(3000);
 
 Two `requireScope` symbols exist; use the right one:
 
-- `requireScope(scope, extra.authInfo)` from `@authplane/mcp` — call inside an MCP tool handler. Throws if the bound bearer token does not carry `scope`.
+- `requireScope(scope, extra.authInfo)` from `@authplane/mcp` — call inside an MCP tool handler. Throws core `InsufficientScope` carrying the missing scope if the bound bearer token does not carry `scope`. On the streamable-HTTP transport the status code is already committed by the time a handler runs, so this is a defence-in-depth backstop, not the 403 step-up path — see the [user guide](docs/user-guide.md#where-the-check-runs-decides-whether-the-client-gets-a-403).
 - `claims.requireScope(scope)` method on `VerifiedClaims` from `@authplane/sdk/core` — call when you are doing manual JWT validation outside the MCP request flow and you already hold a `VerifiedClaims`.
 
 In a normal MCP server you only need the first one; the bearer middleware already populated `extra.authInfo` for you.

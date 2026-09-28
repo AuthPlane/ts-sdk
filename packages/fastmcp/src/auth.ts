@@ -141,9 +141,7 @@ function readBearerToken(request: IncomingMessage): string | undefined {
 	}
 }
 
-function collectDpopHeaderValues(
-	request: IncomingMessage,
-): readonly string[] {
+function collectDpopHeaderValues(request: IncomingMessage): readonly string[] {
 	// `IncomingMessage.headers` lowercases keys in Node, but FastMCP may
 	// wrap/transform. Scan case-insensitively and normalise to
 	// `string | string[] | undefined` for the shared core helper, which
@@ -241,11 +239,18 @@ export async function authplaneFastMcpAuth(
 	if (options.asCredentials !== undefined) {
 		resourceOptions.asCredentials = options.asCredentials;
 	}
+	if (options.resourceMetadataUrl !== undefined) {
+		resourceOptions.resourceMetadataUrl = options.resourceMetadataUrl;
+	}
 
 	const verifier = client.resource(resourceOptions);
 	const tokenVerifier = new AuthplaneTokenVerifier(verifier);
 	const protectedResourceMetadata = verifier.prmResponse();
-	const protectedResourceMetadataUrl = verifier.prmDocumentUrl();
+	// The configured override when there is one, the derived URL otherwise —
+	// this value is only ever advertised, in the `resource_metadata` parameter
+	// of the challenges built below. The document FastMCP serves from the
+	// `oauth` block is unaffected.
+	const protectedResourceMetadataUrl = verifier.resourceMetadataUrl();
 
 	const parsedResource = new URL(resource);
 	const resourceOrigin = `${parsedResource.protocol}//${parsedResource.host}`;
@@ -277,7 +282,13 @@ export async function authplaneFastMcpAuth(
 			headers: {
 				"WWW-Authenticate": wwwAuthenticate(error, {
 					resourceMetadataUrl: protectedResourceMetadataUrl,
-					scope: defaultRequiredScopes,
+					// Passed only when non-empty so the error's own
+					// requiredScopes can fill in — an explicit array, empty
+					// included, wins over the fallback. Matches the Hono and
+					// NestJS mappings.
+					...(defaultRequiredScopes.length > 0
+						? { scope: defaultRequiredScopes }
+						: {}),
 				}),
 			},
 		});
@@ -327,7 +338,12 @@ export async function authplaneFastMcpAuth(
 				session.scopes.includes(scope),
 			);
 			if (!hasAll) {
-				throw challengeResponse(new InsufficientScope("Insufficient scope"));
+				// Carry the scopes on the error: that is what makes the
+				// requiredScopes fallback in wwwAuthenticate reachable from
+				// here, and it matches VerifiedClaims.requireScopes.
+				throw challengeResponse(
+					new InsufficientScope("Insufficient scope", defaultRequiredScopes),
+				);
 			}
 		}
 

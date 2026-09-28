@@ -1,5 +1,6 @@
 import {
 	type AuthplaneError,
+	errorResponseBody,
 	httpStatus,
 	InsufficientScope,
 	wwwAuthenticate,
@@ -57,8 +58,6 @@ export function writeAuthplaneErrorResponse<
 		wwwOptions.scope = scope;
 	}
 
-	const errorCode =
-		error instanceof InsufficientScope ? "insufficient_scope" : "invalid_token";
 	// Build the whole Response in one `c.json` call — the `WWW-Authenticate`
 	// header rides its headers argument rather than a separate `c.header()`
 	// mutation, so the challenge and the body are set at a single construction
@@ -67,7 +66,10 @@ export function writeAuthplaneErrorResponse<
 	// is that both the returned-response paths and the `c.res = …` assignment
 	// path go through the same builder instead of a mutate-then-return sequence.)
 	return c.json(
-		{ error: errorCode, error_description: error.message },
+		// Composed by core so the body names the same error code the challenge
+		// does and neither carries the exception's message to an unauthenticated
+		// caller.
+		errorResponseBody(error),
 		httpStatus(error) as ContentfulStatusCode,
 		{ "WWW-Authenticate": wwwAuthenticate(error, wwwOptions) },
 	);
@@ -78,11 +80,11 @@ export function writeAuthplaneErrorResponse<
  * `bearerAuth` verification-path catch and the default `authplaneOnError`
  * fallback so an unexpected error surfaces as the SAME clean JSON 500 on both
  * paths instead of an unhandled rejection. The `error_description` is supplied
- * explicitly by the caller and never derived from the error here — callers that
- * face untrusted application errors (the `authplaneOnError` fallback) pass a
- * fixed `"Internal Server Error"` so a raw error message is never echoed to the
- * client, while the middleware's own verification-fault path may pass its
- * message.
+ * explicitly by the caller and never derived from the error here, and every
+ * caller passes a fixed `"Internal Server Error"` — the `authplaneOnError`
+ * fallback because it faces untrusted application errors, and the middleware's
+ * own verification-fault path for the same reason a challenge no longer
+ * carries the message. A 500 must not echo one either.
  */
 export function writeServerErrorResponse<
 	E extends { Variables: HonoAuthVariables },

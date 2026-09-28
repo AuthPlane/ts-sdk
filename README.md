@@ -17,6 +17,11 @@ OAuth, JWT validation, and MCP-authentication primitives for Node.js. Ships fram
 - Node.js 22 LTS (or newer)
 - TypeScript consumers: `moduleResolution` set to `bundler`, `node16`, or `nodenext` (required for the package `exports` subpaths)
 
+## Compatibility
+
+- Tested against authserver 0.2.0.
+- Introspection-based revocation (`IntrospectionRevocation`) requires authserver 0.1.2 or newer, and a resource-server client that is confidential and either the issuing client or a runtime-client of the Resource.
+
 ## Quickstart
 
 ```ts

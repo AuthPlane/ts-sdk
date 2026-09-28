@@ -7,6 +7,7 @@ Complete reference for the Authplane adapter for [Hono](https://hono.dev). Start
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [`authplaneHonoAuth(options)` reference](#authplanehonoauthoptions-reference)
+- [Where the PRM document lives](#where-the-prm-document-lives)
 - [Context shape (`c.get("auth")`)](#context-shape-cgetauth)
 - [Scope enforcement](#scope-enforcement)
 - [Per-route scope enforcement with `requireScope`](#per-route-scope-enforcement-with-requirescope)
@@ -86,6 +87,7 @@ The adapter produces:
 | `metadataRefreshSeconds` | `number` (optional, default `3600`) | Metadata cache TTL. |
 | `devMode` | `boolean` (optional, default `false`) | Relaxes HTTPS and private-host restrictions. Only for local dev. |
 | `revocationChecker` | `RevocationChecker \| IntrospectionRevocation` (optional) | Enable real-time revocation checking. |
+| `resourceMetadataUrl` | `string` (optional) | Absolute URL advertised as `resource_metadata=` on every challenge, overriding the URL derived from `resource`. See [Where the PRM document lives](#where-the-prm-document-lives). |
 | `replayStore` | `DPoPReplayStore` (optional) | Convenience shortcut folded into `inboundDPoP.replayStore`. Cannot be combined with `inboundDPoP.replayStore`. |
 | `inboundDPoP` | `InboundDPoPOptions` (optional) | Full DPoP knobs (`required`, `maxProofAgeSeconds`, `allowedProofAlgorithms`, `replayStore`). |
 | `dpopProvider` | `DPoPProvider` (optional) | Outbound DPoP provider for AS-facing calls (introspection, token exchange, revocation). |
@@ -104,9 +106,22 @@ Plus every option from `AuthplaneResourceOptions` (`core`) not otherwise overrid
 | `verifier` | `AuthplaneResource` | The core resource primitive; call `verifier.verify(token)` directly to bypass the middleware. |
 | `bearerAuth` | `MiddlewareHandler<{ Variables: HonoAuthVariables }>` | Ready-to-use Hono middleware. Verifies token, enforces scopes, attaches `c.get("auth")`. |
 | `onError` | `ErrorHandler<E>` | Preconfigured `app.onError` handler, bound with the SAME `realm` + `resource_metadata` URL as `bearerAuth`. Install with `app.onError(auth.onError)` so a handler-raised `AuthplaneError` (e.g. `requireScope` → `InsufficientScope`) emits a challenge that matches the verification path. Generic over the app's `Env` — instantiate the factory at your `Bindings` shape to attach it to a Workers-typed app without a cast. |
-| `protectedResourceMetadataPath` | `string` | Hono route path where the PRM should be served (e.g. `/.well-known/oauth-protected-resource/mcp`). |
+| `protectedResourceMetadataPath` | `string` | Hono route path where the PRM should be served (e.g. `/.well-known/oauth-protected-resource/mcp`). Always derived from `resource`, even when `resourceMetadataUrl` points elsewhere. |
 | `protectedResourceMetadata` | `ProtectedResourceMetadata` | The PRM JSON payload. |
 | `protectedResourceMetadataHandler` | `Handler` | Hono handler that serves the PRM. |
+
+## Where the PRM document lives
+
+RFC 9728 does not say who has to host the metadata document, only what a client finds when it follows the `resource_metadata` parameter of a `WWW-Authenticate` challenge. Two topologies work.
+
+**(a) Resource-hosted — the default.** This server serves the document itself at the URL derived from `resource`, `/.well-known/oauth-protected-resource[/path]`, and every challenge points there. Nothing to configure. Mount `protectedResourceMetadataHandler` at `protectedResourceMetadataPath`, as the quickstart does.
+
+**(b) AS-hosted.** `authserver` >= 0.2.0 serves an RFC 9728 document for every registered Resource at `<issuer>/.well-known/oauth-protected-resource/{ref}`, where `{ref}` is the Resource URI's path suffix (RFC 9728 §3.1) or its slug. Set `resourceMetadataUrl` to that URL and this server stops advertising its own; it only points at the AS's. Use it when the resource server cannot host well-known paths — a platform that owns `/.well-known`, a proxy that strips it, a resource mounted under a path it does not control.
+
+Only the advertisement moves. The PRM route stays mounted where it was, and both challenge paths — `bearerAuth`'s 401 and `auth.onError`'s 403 — pick the configured URL up from the same place, so they cannot drift. `bearerAuth` still takes its own `resourceMetadataUrl` when you wire it by hand; that per-middleware value is the more specific layer. So the two documents can be served side by side during a migration, and switching back is a config change.
+
+Whichever hosts it, RFC 9728 §3.3 binds the document to this server: the `resource` value **inside** the document must equal the URL clients call, byte for byte, or a conformant client discards the document — and the resource server then looks unreachable rather than misconfigured. So the Resource URI registered at the authorization server, the `resource` configured here, and this server's public URL must be the same string; a trailing slash or an `http`/`https` difference is enough to break it.
+
 
 ## Context shape (`c.get("auth")`)
 
@@ -199,7 +214,7 @@ The two paths cooperate rather than double-handle. On a downstream throw, Hono d
 
 Every error funnels through core's `httpStatus()` + `wwwAuthenticate()`: `InsufficientScope` → 403 + `Bearer …`, DPoP failures → 401 + `DPoP …` (except `DPoPNotSupported`), upstream-AS failures (`JWKSFetchError`, `MetadataFetchError`) → 503 with retry semantics.
 
-> No equivalent to MCP's URL elicitation. `@authplane/mcp` ships `wrapToolWithUrlElicitation` / `toUrlElicitationRequiredError` to translate a `ConsentRequiredError` (raised by a token exchange against `authserver`) into MCP's `-32042` response. Hono has no analogous protocol hook — if a handler performs a token exchange and catches `ConsentRequiredError`, translate it yourself inside the handler (typically to a `401` with a JSON body carrying the `consent_url`) before returning.
+> No equivalent to MCP's URL elicitation. `@authplane/mcp` ships `wrapToolWithUrlElicitation` / `toUrlElicitationRequiredError` to translate a `ConsentRequiredError` (raised by a token exchange against `authserver`) into MCP's `-32042` response. Hono has no analogous protocol hook — if a handler performs a token exchange and catches `ConsentRequiredError`, translate it yourself inside the handler (typically to a `401` with a JSON body carrying the `consent_url`) before returning. An `AccessDeniedError` (`access_denied`, 403) from the same exchange is not a consent problem: the operator has not allowlisted the exchanging client on the target Resource (`PATCH /admin/resources/{id}` with `{"policy": {"exchange": {"allowed_client_ids": ["<exchanging-client-id>"]}}}`), and re-prompting the user will not fix it; an `InvalidTargetError` (`invalid_target`, 400) means the `resource` string does not match a granted resource exactly.
 
 ## DPoP-bound tokens
 
@@ -243,6 +258,14 @@ const auth = await authplaneHonoAuth({
 ```
 
 `IntrospectionRevocation` is a singleton class from `@authplane/sdk/core` — obtain its instance with `IntrospectionRevocation.get()` and pass it through `revocationChecker`. Internally it's detected via `instanceof`, which flips `AuthplaneResource` into "introspect on every verify" mode: the underlying resource calls `authserver`'s introspection endpoint on each `verify()` and raises on `active: false`. This adds one round-trip per request; use only if eager revocation matters to your threat model.
+
+The introspecting client must be **confidential** (it needs a `clientSecret`) **and** either the client that was issued the token or a runtime-client of the Resource named in the token's `aud`. Since authserver 0.1.2 every other caller — a public (secret-less) client included — receives `{"active": false}`, which the SDK reads as "revoked", so a resource server introspecting with the wrong credentials silently rejects every token. Register the resource server on its Resource with:
+
+```bash
+authserver admin resource runtime-client add --client-id <rs-client-id> --slug <resource-slug>
+```
+
+A public client cannot introspect at all.
 
 You can also pass a custom `RevocationChecker` — an async function `(claims, rawToken) => Promise<boolean>` — for database-backed revocation lists.
 

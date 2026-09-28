@@ -1,12 +1,13 @@
 import {
 	AuthplaneClient,
-	type AuthplaneResource,
+	AuthplaneResource,
+	type AuthplaneResourceOptions,
 	FetchSettings,
 } from "@authplane/sdk/core";
 import { Test } from "@nestjs/testing";
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
 
-import { Module } from "@nestjs/common";
+import { Logger, Module } from "@nestjs/common";
 
 import { AuthplaneAuthGuard } from "../../src/application/authplane.guard.js";
 import { AuthplaneExceptionFilter } from "../../src/application/authplane.exception-filter.js";
@@ -29,6 +30,10 @@ function mockResource(): AuthplaneResource {
 			authorization_servers: ["https://auth.example.com"],
 		})),
 		prmDocumentUrl: vi.fn(
+			() =>
+				"https://api.example.com/.well-known/oauth-protected-resource/mcp",
+		),
+		resourceMetadataUrl: vi.fn(
 			() =>
 				"https://api.example.com/.well-known/oauth-protected-resource/mcp",
 		),
@@ -528,6 +533,164 @@ describe("AuthplaneModule option passthrough", () => {
 				revocationChecker,
 				allowedAlgorithms: ["ES256"],
 				clockSkewSeconds: 90,
+			}),
+		);
+
+		await moduleRef.close();
+	});
+});
+
+/**
+ * A mock client whose `resource()` calls through to the real core constructor.
+ *
+ * `mockClient` above returns a stub that cannot reject anything, so a test
+ * built on it would pass whether or not the RFC 8707 §2 gate exists. The
+ * client-owned collaborators are stubbed because the indicator gate runs first
+ * in the constructor and nothing here dereferences them.
+ */
+function realResourceClient() {
+	return {
+		resource: (options: AuthplaneResourceOptions) =>
+			new AuthplaneResource({
+				...options,
+				issuer: "https://auth.example.com",
+				metadataCache: {},
+				fetchSettings: {},
+				getJwksCache: () => ({}),
+			} as unknown as ConstructorParameters<typeof AuthplaneResource>[0]),
+		close: vi.fn(async () => undefined),
+	};
+}
+
+describe("AuthplaneModule resource indicator (RFC 8707 §2)", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("fails module initialisation on a fragment-bearing resource", async () => {
+		// `forRoot` itself survives: `inspectSyncFactory` swallows the throw
+		// from `oauthProtectedResourceMetadataPath` and simply skips the PRM
+		// controller. The rejection has to land when the resource provider is
+		// instantiated, which is what `compile()` drives here — otherwise the
+		// app would boot and only fail when a client tried to discover it.
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(
+			realResourceClient() as unknown as AuthplaneClient,
+		);
+
+		await expect(
+			Test.createTestingModule({
+				imports: [
+					AuthplaneModule.forRoot({
+						...BASE_OPTIONS,
+						resource: "https://api.example.com/mcp#frag",
+					}),
+				],
+			}).compile(),
+		).rejects.toThrow(/RFC 8707 §2/u);
+	});
+
+	it("does not advise `hints.prmPath` when the resource itself was rejected", () => {
+		// Ordering: `compile()` reports the RFC 8707 §2 error, but registration
+		// runs first, and the generic "pass `hints.prmPath`" advice is a dead
+		// end for this failure — supplying a path registers the controller and
+		// the resource provider still throws. So the operator must not read it
+		// ahead of the real reason.
+		const warn = vi
+			.spyOn(Logger.prototype, "warn")
+			.mockImplementation(() => undefined);
+
+		AuthplaneModule.forRoot({
+			...BASE_OPTIONS,
+			resource: "https://api.example.com/mcp#frag",
+		});
+
+		expect(warn).not.toHaveBeenCalled();
+	});
+
+	it("still advises `hints.prmPath` when no path is derivable at all", () => {
+		// Control for the above: the advice is suppressed for a rejected
+		// identifier, not switched off. An async factory is unreachable at
+		// registration, so the hint is the only way to mount the controller
+		// and the warning is the operator's one signal.
+		const warn = vi
+			.spyOn(Logger.prototype, "warn")
+			.mockImplementation(() => undefined);
+
+		AuthplaneModule.forRootAsync({
+			useFactory: () => Promise.resolve(BASE_OPTIONS),
+		});
+
+		expect(warn).toHaveBeenCalledWith(
+			expect.stringContaining("PRM controller not registered"),
+		);
+	});
+
+	it("fails module initialisation on a relative resource through the same gate", async () => {
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(
+			realResourceClient() as unknown as AuthplaneClient,
+		);
+
+		await expect(
+			Test.createTestingModule({
+				imports: [
+					AuthplaneModule.forRoot({
+						...BASE_OPTIONS,
+						resource: "/mcp",
+					}),
+				],
+			}).compile(),
+		).rejects.toThrow(/absolute URL with a scheme and a host/u);
+	});
+
+	it("initialises normally for the same identifier without a fragment", async () => {
+		// Guards the test above against passing vacuously on a broken harness.
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(
+			realResourceClient() as unknown as AuthplaneClient,
+		);
+
+		const moduleRef = await Test.createTestingModule({
+			imports: [AuthplaneModule.forRoot(BASE_OPTIONS)],
+		}).compile();
+
+		const resource = moduleRef.get<AuthplaneResource>(AUTHPLANE_RESOURCE);
+		expect(resource.prmDocumentUrl()).toBe(
+			"https://api.example.com/.well-known/oauth-protected-resource/mcp",
+		);
+
+		await moduleRef.close();
+	});
+});
+
+describe("AuthplaneModule resource_metadata override (RFC 9728 §3)", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("forwards resourceMetadataUrl to client.resource() and keeps the PRM route derived", async () => {
+		const resource = mockResource();
+		const client = mockClient(resource);
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(
+			client as unknown as AuthplaneClient,
+		);
+
+		const moduleRef = await Test.createTestingModule({
+			imports: [
+				AuthplaneModule.forRoot({
+					...BASE_OPTIONS,
+					resourceMetadataUrl:
+						"https://auth.example.com/.well-known/oauth-protected-resource/mcp",
+				}),
+			],
+		}).compile();
+
+		// The exception filter reads the option off the core resource, so
+		// reaching the constructor is the whole of the plumbing; the route the
+		// PRM controller is mounted at is still derived from `resource`.
+		expect(client.resource).toHaveBeenCalledWith(
+			expect.objectContaining({
+				resource: "https://api.example.com/mcp",
+				resourceMetadataUrl:
+					"https://auth.example.com/.well-known/oauth-protected-resource/mcp",
 			}),
 		);
 

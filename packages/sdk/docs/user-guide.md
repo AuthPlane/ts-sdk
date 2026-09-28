@@ -118,7 +118,7 @@ Methods and accessors on `VerifiedClaims`:
 | `hasScope(scope)` | method | Non-throwing equivalent of `requireScope` — returns `boolean`. |
 | `hasClaim(key, value?)` | method | Presence check on `raw[key]`; with `value` also requires strict equality. |
 | `act` | getter | RFC 8693 §4.1 immediate actor (`act` claim) when obtained via token exchange, or `undefined`. |
-| `mayAct` | getter | RFC 8693 §4.4 `may_act` — parties permitted to act on behalf of the subject, or `undefined`. |
+| `mayAct` | getter | **Deprecated** — authserver 0.2.0 no longer issues `may_act`; removed in the next minor. Always `undefined` against 0.2.0. |
 
 ## Protected Resource Metadata (RFC 9728)
 
@@ -141,6 +141,27 @@ app.get("/.well-known/oauth-protected-resource", (_req, res) => {
 });
 ```
 
+### Where the PRM document lives
+
+RFC 9728 does not say who has to host the metadata document, only what a client finds when it follows the `resource_metadata` parameter of a `WWW-Authenticate` challenge. Two topologies work.
+
+**(a) Resource-hosted — the default.** This server serves the document itself at the URL derived from `resource`, `/.well-known/oauth-protected-resource[/path]`, and every challenge points there. Nothing to configure. Serve `resource.prmResponse()` at `resource.prmDocumentUrl()` (or at `oauthProtectedResourceMetadataPath(resource)`); every adapter does this for you.
+
+**(b) AS-hosted.** `authserver` >= 0.2.0 serves an RFC 9728 document for every registered Resource at `<issuer>/.well-known/oauth-protected-resource/{ref}`, where `{ref}` is the Resource URI's path suffix (RFC 9728 §3.1) or its slug. Set `resourceMetadataUrl` to that URL and this server stops advertising its own; it only points at the AS's. Use it when the resource server cannot host well-known paths — a platform that owns `/.well-known`, a proxy that strips it, a resource mounted under a path it does not control.
+
+```ts
+const resource = client.resource({
+  resource: "https://api.example.com/mcp",
+  scopes: ["read"],
+  resourceMetadataUrl:
+    "https://auth.example.com/.well-known/oauth-protected-resource/mcp",
+});
+```
+
+Only the advertisement moves. `prmDocumentUrl()` keeps returning the derived URL — it is what the PRM route is mounted at — while `resource.resourceMetadataUrl()`, the accessor every challenge reads, returns the configured one. `prmResponse()` is unchanged. So the two documents can be served side by side during a migration, and switching back is a config change.
+
+Whichever hosts it, RFC 9728 §3.3 binds the document to this server: the `resource` value **inside** the document must equal the URL clients call, byte for byte, or a conformant client discards the document — and the resource server then looks unreachable rather than misconfigured. So the Resource URI registered at the authorization server, the `resource` configured here, and this server's public URL must be the same string; a trailing slash or an `http`/`https` difference is enough to break it.
+
 ## Introspection and revocation
 
 By default `AuthplaneResource.verify()` relies solely on the JWT signature + claims + `exp`/`nbf` to decide validity. For stricter scenarios where the AS may revoke tokens before expiry, combine verification with RFC 7662 introspection.
@@ -161,6 +182,16 @@ const resource = client.resource({
 ```
 
 `IntrospectionRevocation.get()` returns the marker singleton that tells `AuthplaneResource.verify()` to call the AS's introspection endpoint on each token; if `active: false` comes back, `TokenRevoked` is thrown. The introspection request is authenticated with `asCredentials` configured on the resource itself — `auth` on `AuthplaneClient.create()` only powers token-acquisition flows (`clientCredentials`, `exchange`).
+
+The introspecting client must be **confidential** (it needs a `clientSecret`) **and** either the client that was issued the token or a runtime-client of the Resource named in the token's `aud`. Since authserver 0.1.2 every other caller — a public (secret-less) client included — receives `{"active": false}`, which the SDK reads as "revoked", so a resource server introspecting with the wrong credentials silently rejects every token. Register the resource server on its Resource with:
+
+```bash
+authserver admin resource runtime-client add --client-id <rs-client-id> --slug <resource-slug>
+```
+
+A public client cannot introspect at all.
+
+Constructing the resource without complete `asCredentials` logs a warning saying so; the first `active: false` on a token that passed local JWT verification logs a second one pointing at the runtime-client requirement (once per resource).
 
 You can also pass a custom `RevocationChecker` function: `(claims, rawToken) => Promise<boolean>` — return `true` to reject.
 
@@ -345,6 +376,20 @@ const exchanged = await client.exchange({
 
 Useful for service-to-service calls where a frontend API needs a narrowed or re-targeted token to call a downstream service.
 
+**Operator step.** For each MCP server that exchanges for a downstream resource it does not itself act as, the operator must allowlist the exchanging client on the target Resource:
+
+```http
+PATCH /admin/resources/{id}
+{"policy": {"exchange": {"allowed_client_ids": ["<exchanging-client-id>"]}}}
+```
+
+A client exchanging a token issued to itself, a fronted exchange and a Broker resource need nothing.
+
+Two failure answers from the AS are policy, not outages, and neither counts toward the circuit breaker:
+
+- `access_denied` (HTTP 403, `AccessDeniedError`) on a cross-client exchange means the operator has not allowlisted the exchanging client on the target Resource. Unlike `consent_required`, re-prompting the user will not fix it.
+- `invalid_target` (HTTP 400, `InvalidTargetError`, RFC 8707 §2.2) means the `resource` string does not match a granted resource exactly — the comparison is byte for byte, so a trailing slash counts.
+
 ### Introspection and revocation from the client
 
 ```ts
@@ -433,7 +478,9 @@ All SDK errors extend `AuthplaneError`. Catch at the appropriate level and map t
 
 **OAuth client errors** (thrown by `AuthplaneClient` token methods):
 
-- `InvalidClientError`, `InvalidGrantError`, `InvalidRequestError`, `InvalidScopeError`, `UnauthorizedClientError`, `UnsupportedGrantTypeError`, `ConsentRequiredError`, `ServerError`.
+- `InvalidClientError`, `InvalidGrantError`, `InvalidRequestError`, `InvalidScopeError`, `UnauthorizedClientError`, `UnsupportedGrantTypeError`, `ConsentRequiredError`, `AccessDeniedError`, `InvalidTargetError`, `ServerError`.
+- `AccessDeniedError` — `access_denied` (403) on a cross-client token exchange: the exchanging client is not allowlisted on the target Resource. An operator fix, not a user prompt (contrast `ConsentRequiredError`). Excluded from the circuit breaker.
+- `InvalidTargetError` — `invalid_target` (400, RFC 8707 §2.2): the `resource` sent does not match a granted resource byte for byte. Excluded from the circuit breaker.
 - `InvalidGrant` — top-level catch surface for token-exchange failures (subject/actor token rejected by the AS). Distinct from the `InvalidGrantError` OAuth-error subclass: `InvalidGrant` extends `AuthplaneError` directly and carries no OAuth `code` / `statusCode`. Maps to HTTP 401 via `httpStatus`.
 - `CircuitOpenError` — circuit breaker is open (too many AS failures in a row).
 
@@ -472,8 +519,21 @@ Builds an RFC 6750 §3 `WWW-Authenticate` header value. Picks the right scheme (
 - `realm?: string` — appended as `realm="…"`.
 - `resourceMetadataUrl?: string` — appended as `resource_metadata="…"` (RFC 9728 §5.1) so clients can discover the AS.
 - `scope?: readonly string[]` — when non-empty, appended as `scope="…"` (RFC 6750), commonly paired with `insufficient_scope`.
+- `verboseDescription?: boolean` — see below. Default `false`.
 
-**Sanitisation.** All interpolated values (`error.message`, `realm`, `resourceMetadataUrl`, joined `scope`) have CR / LF / `"` / `\` stripped before being spliced into the quoted-string parameter (RFC 9110 §11.4), so a crafted error message cannot terminate the parameter or inject a new header field. The rule is exported as `sanitiseHeaderValue(value)` for code that splices values into a challenge through a header builder outside this SDK.
+**`error_description` is fixed, not the exception message.** The challenge and the JSON error body both answer a caller who by definition has not authenticated, so the description is chosen by the `error=` code:
+
+| `error=` | `error_description=` |
+|---|---|
+| `invalid_token` | `The access token is missing or not valid for this resource` |
+| `insufficient_scope` | `The access token does not carry the scope this operation requires` |
+| `invalid_dpop_proof` | `The DPoP proof is missing or not valid for this request` |
+
+The SDK's own messages name the failing detail — the unknown `kid`, the claim that did not validate, the `typ` that was rejected — and an `aud` mismatch would hand the caller the exact audience string the resource expects, which is the value they would need in order to request a token for it. RFC 6750 §3 does not require `error_description` to be diagnostic; the `error=` code already carries what a conforming client acts on. The message stays on the exception, so log it server-side. `verboseDescription: true` restores the old behaviour for local debugging — it discloses SDK-internal detail to unauthenticated callers, so do not enable it in production.
+
+This covers both halves of the response. `errorResponseBody(error, options?)` builds the JSON body from the same two decisions — the `error=` code above and the sentence it selects — so the body an adapter serves and the challenge beside it can never disagree, and neither carries the message. `@authplane/mcp`, `@authplane/hono` and `@authplane/nestjs` all serve it; write it yourself only if you are building an adapter, and pass `scheme` when you emit a multi-scheme challenge set so the one body names the half you want. `verboseDescription: true` restores the message there too, under the same warning.
+
+**Sanitisation.** All interpolated values (`realm`, `resourceMetadataUrl`, joined `scope`, and a `verboseDescription` message) have CR / LF / `"` / `\` stripped before being spliced into the quoted-string parameter (RFC 9110 §11.4), so a crafted value cannot terminate the parameter or inject a new header field. Sanitisation is not a defence against disclosure, which is what the fixed descriptions above are for. The rule is exported as `sanitiseHeaderValue(value)` for code that splices values into a challenge through a header builder outside this SDK.
 
 ```ts
 import { httpStatus, wwwAuthenticate, TokenExpired } from "@authplane/sdk/core";
@@ -495,9 +555,36 @@ try {
 }
 ```
 
+### `wwwAuthenticateChallenges(error, options)`
+
+`wwwAuthenticate` picks the scheme from the error's type, so it can only ever name one. A resource running inbound DPoP in optional mode accepts both `Bearer` and `DPoP` and should advertise both, so a DPoP-capable client can discover that sender-constrained tokens are taken here (RFC 9449 §7.1; §7.2 covers running the two side by side).
+
+Two challenges cannot be comma-joined — the comma also separates parameters *inside* a challenge — so this returns one header value per scheme and the caller emits one header field per element:
+
+```ts
+import { wwwAuthenticateChallenges, httpStatus } from "@authplane/sdk/core";
+
+res.status(httpStatus(error));
+for (const challenge of wwwAuthenticateChallenges(error, {
+  schemes: ["Bearer", "DPoP"],
+  algs: inboundDPoP.allowedProofAlgorithms,
+  resourceMetadataUrl: resource.prmDocumentUrl(),
+})) {
+  res.append("WWW-Authenticate", challenge);
+}
+```
+
+It takes every `wwwAuthenticate` option plus two of its own:
+
+- `schemes?: readonly string[]` — the schemes to advertise, in order. `Bearer` and `DPoP` are recognised case-insensitively and duplicates collapse. Omit it to derive the single scheme from the error, which returns exactly what `wwwAuthenticate` would, in a one-element array. An empty array or an unrecognised scheme throws a `TypeError` — the scheme is a bare RFC 7235 token, so an unusable value is refused rather than sanitised onto the wire.
+- `algs?: readonly string[]` — the RFC 9449 §7.1 `algs` parameter, emitted on the `DPoP` challenge only and ignored when `DPoP` is not among `schemes`. Omitting the property omits the parameter; passing `undefined` means "the default set", the same meaning `InboundDPoPOptions.allowedProofAlgorithms` gives it, so `algs: options.allowedProofAlgorithms` is correct on an options object built from defaults. Values are validated against the supported set rather than escaped: escaping lets a comma through, and a comma is what a lenient client-side parser splits a joined challenge on.
+
+The error selects the `error=` code per scheme the same way `wwwAuthenticate` does: `invalid_dpop_proof` is DPoP-specific, so a `Bearer` challenge emitted alongside a DPoP one keeps `invalid_token`.
+
 ## Caching, circuit breaker, and cleanup
 
 - **Token cache.** `AuthplaneClient` caches client-credentials tokens (keyed by scope/resources). Configure TTL via `cacheTtlBufferSeconds` / `defaultTtlSeconds`.
-- **JWKS / metadata cache.** `AuthplaneClient` refreshes JWKS every `jwksRefreshSeconds` (default 300) and metadata every `metadataRefreshSeconds` (default 3600). Both can be overridden.
+- **JWKS / metadata cache.** `AuthplaneClient` refreshes JWKS every `jwksRefreshSeconds` (default 300) and metadata every `metadataRefreshSeconds` (default 3600). Both can be overridden. Refreshes are driven by traffic, not by a background timer: the first `verify()` (or AS-facing call) after the interval elapses pays for the refetch. A resource server that only verifies tokens therefore still tracks the AS. `jwks_uri` is read from the metadata document on every JWKS fetch rather than captured at construction, so a rotation takes effect on the next fetch with no window in which keys are still being pulled from the withdrawn URI. A token whose `kid` is absent from the cached JWKS re-reads metadata as well as the JWKS, so a rotation is followed on the request that first needs the new key rather than at the next interval boundary. That re-read is floored at one per `min(metadataRefreshSeconds, 60)` seconds, because the `kid` on an unverified token is attacker-controlled and the re-read bypasses the interval by design: without the floor, invalid tokens would drive discovery traffic at your AS one-for-one. Misses inside the floor fall back to an ordinary cache read, and the first miss after it re-reads immediately. Set `metadataRefreshSeconds: 0` to opt out.
+- **Fetch-failure retry floor.** After a metadata or JWKS fetch fails, neither document is re-attempted for `fetchFailureBackoffSeconds` (default 30) — clamped per cache to `max(1, min(fetchFailureBackoffSeconds, refreshSeconds))`, so it never exceeds the cache's own refresh interval and never collapses to zero. In between, verifications are served from the last known good documents (an unreachable AS costs latency, not correctness); when nothing is cached yet, the retained failure surfaces immediately instead of stalling each caller on another doomed fetch. Without the floor, an AS outage amplifies into per-request latency on the resource server: once the refresh interval elapses, every wave of traffic pays the fetch timeout again — in-flight deduplication collapses concurrent callers, not the waves that follow. Any successful fetch closes the floor, and the first attempt it suppresses logs a `console.warn` naming the backing-off document (`metadata` or `JWKS`; once per floor window) so a backoff is distinguishable from a live outage. Raise the value if your AS is slow to come back and you would rather serve cached documents longer between probes; the floor is deliberately not fully disableable — except that a cache whose refresh interval is `0` (`metadataRefreshSeconds: 0` / `jwksRefreshSeconds: 0`, "re-read every time") opts out of the failure floor as well as the forced-read floor.
 - **Circuit breaker.** `AuthplaneClient` opens a circuit after consecutive AS failures (default threshold 5, cooldown 30 s). While open, AS calls fail fast with `CircuitOpenError`. Successful calls after cooldown close the circuit.
 - **Cleanup.** Call `await client.close()` on shutdown to stop timers and release resources. Adapters expose a `client` reference on their auth helper result so you can call `close()` from your server's shutdown hook.

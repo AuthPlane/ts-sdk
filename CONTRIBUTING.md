@@ -105,14 +105,16 @@ parent-dir/
     └── oauth-sdk-conformance-catalog.yaml
 ```
 
-With that layout in place, `npm test` auto-discovers the catalog — no configuration required. Override the path with `CONFORMANCE_CATALOG_PATH` if the catalog lives elsewhere:
+With that layout in place, `npm test` auto-discovers the catalog — no configuration required. Keep the sibling checkout **at the pinned SHA**: the alignment test asserts that the catalog and the SDK's `conformanceCase(...)` declarations agree in both directions, so a sibling checkout sitting on any other revision fails it. Running against a catalog older than the pin reports the cases adopted since as declarations the catalog does not carry; running against a newer one reports its new cases as uncovered. Neither is a defect in your branch — re-run `git -C conformance checkout "$(cat ts-sdk/.conformance-catalog-ref)"` first.
+
+Override the path with `CONFORMANCE_CATALOG_PATH` if the catalog lives elsewhere:
 
 ```bash
 CONFORMANCE_CATALOG_PATH=/path/to/oauth-sdk-conformance-catalog.yaml \
   npm run test -w @authplane/sdk
 ```
 
-If the catalog isn't available at all, skip the two catalog-dependent tests with:
+If the catalog isn't available at all, skip the catalog-dependent tests with:
 
 ```bash
 AUTHPLANE_CONFORMANCE_SKIP_CATALOG=1 npm test
@@ -164,7 +166,7 @@ The end-to-end demo exercises the FastMCP and MCP adapters against a local Authp
 
 Prerequisites:
 
-1. OAuth server running locally on `:9000`/`:9001` with client credentials, token exchange, and DPoP enabled.
+1. OAuth server (authserver 0.2.0) running locally on `:9000`/`:9001` — client credentials, token exchange and DPoP are on by default since authserver 0.2.0.
 2. Demo client registration with required grant types and scopes.
 3. Adapter demo server (`packages/fastmcp/demo/run.sh` or `packages/mcp/demo/run.sh`).
 4. Demo client execution (matrix client).
@@ -192,12 +194,13 @@ bash scripts/manual-e2e-smoke.sh --adapter fastmcp --skip-setup
 Optional overrides:
 
 - `AUTHSERVER_DIR=/path/to/authserver`
+- `AUTHSERVER_REF=v0.2.0` — check out that ref of the authserver checkout before building (default: leave it as is)
 - `ISSUER_URL=http://localhost:9000`
 - `RESOURCE_URL=http://localhost:8080/mcp`
 
 ### Common demo failures
 
-- `client_credentials grant is not enabled` — OAuth server is missing `AUTHPLANE_CLIENT_CREDENTIALS_ENABLED=true`.
+- `access_denied` on a token exchange — the exchanging client is not allowlisted on the target Resource (`policy.exchange.allowed_client_ids` / `policy.runtime.client_ids`).
 - `client is not authorized for this grant type` — client registration is missing `urn:ietf:params:oauth:grant-type:token-exchange`.
 - `requested scope is invalid or not allowed` — requested scopes are not registered or assigned to the demo client.
 - `invalid API key` — admin API requests are using a different key than the server startup key.

@@ -42,6 +42,8 @@ import {
 	buildPrm,
 	oauthProtectedResourceMetadataDocumentUrl,
 	type ProtectedResourceMetadata,
+	validateResourceIndicator,
+	validateResourceMetadataUrl,
 } from "./prm.js";
 
 /**
@@ -57,6 +59,14 @@ export type RevocationChecker = (
 export interface AuthplaneResourceOptions {
 	/**
 	 * Resource URI this token must be bound to.
+	 *
+	 * Must be an absolute URL with a scheme and a host (RFC 8707 §2: "MUST be
+	 * an absolute URI"; RFC 9728 §3 inserts the well-known suffix after the
+	 * host component) and must not carry a fragment component (RFC 8707 §2,
+	 * RFC 9728 §1.2). Anything else — a relative path, a scheme-relative
+	 * `//host/path`, an opaque `urn:` value, a fragment — is rejected with a
+	 * `TypeError` at construction rather than silently producing a malformed
+	 * PRM document URL. `http` hosts are still accepted for local development.
 	 */
 	resource: string;
 
@@ -65,6 +75,42 @@ export interface AuthplaneResourceOptions {
 	 * Used for RFC 9728 Protected Resource Metadata generation.
 	 */
 	scopes: string[];
+
+	/**
+	 * Absolute URL of the Protected Resource Metadata document to advertise in
+	 * the `resource_metadata` parameter of every `WWW-Authenticate` challenge
+	 * (RFC 9728 §5.1), overriding the URL derived from `resource`.
+	 *
+	 * Leave it unset — the default — when this server hosts its own metadata
+	 * document: the derived `/.well-known/oauth-protected-resource[/path]` URL
+	 * is where the SDK's own PRM handler serves it, and the two stay in step by
+	 * construction. Set it when the document lives elsewhere, the case being an
+	 * authorization server that publishes one per registered resource: the
+	 * resource server then only points at it. That topology is the way out for
+	 * a deployment that cannot serve well-known paths at its own origin.
+	 *
+	 * Only the advertised URL changes. The PRM path the SDK's handler mounts at
+	 * is still derived from `resource`, so pointing this elsewhere does not
+	 * unmount the local document, and `prmResponse()` still builds it.
+	 *
+	 * Whatever serves the document, RFC 9728 §3.3 binds it to this resource:
+	 * the `resource` member inside it must equal the identifier the client used
+	 * to reach this server, byte for byte, or a conformant client discards the
+	 * document. So the Resource URI registered at the authorization server, the
+	 * `resource` configured here and the public URL of this server must be the
+	 * same string.
+	 *
+	 * Held to a **stricter** gate than `resource`: an absolute URL with a
+	 * scheme and a host, no fragment and no userinfo — and, unlike `resource`,
+	 * the scheme is narrowed to `http`/`https`, the query must satisfy the RFC
+	 * 3986 §3.4 grammar, and no octet outside printable ASCII may appear
+	 * anywhere in the value. A `resource` of `mcp://…` is accepted; the same
+	 * scheme here is not. The reason is that RFC 9728 §3.2 has the client
+	 * dereference this one, and it is advertised exactly as typed rather than
+	 * re-derived. Same error type and redaction discipline: a `TypeError` at
+	 * construction, with any userinfo elided.
+	 */
+	resourceMetadataUrl?: string;
 
 	/**
 	 * Allowed JWT `alg` values. Dangerous algorithms (HS*) are rejected.
@@ -141,6 +187,7 @@ export class AuthplaneResource {
 
 	private readonly issuer: string;
 	private readonly resource: string;
+	private readonly resourceMetadataUrlOverride: string | undefined;
 	private readonly allowedAlgorithms: readonly string[];
 	private readonly clockSkewSeconds: number;
 	private readonly failClosed: boolean;
@@ -160,10 +207,31 @@ export class AuthplaneResource {
 		| RevocationChecker
 		| undefined;
 
+	private readonly metadataCache: MetadataCache;
 	private readonly getJwksCache: () => JWKSCache;
 	private readonly introspectionChecker: IntrospectionChecker | undefined;
+	private introspectionOwnershipWarned = false;
 
 	public constructor(options: InternalResourceOptions) {
+		// THIS is the authoritative resource-indicator gate — every
+		// construction path reaches it. The class is exported from
+		// `@authplane/sdk/core`, so constructing it directly is supported, and
+		// every adapter (`@authplane/mcp`, `@authplane/fastmcp`,
+		// `@authplane/hono`, `@authplane/nestjs`) funnels its operator-supplied
+		// `resource` through `AuthplaneClient.resource()` into here.
+		//
+		// A gate living only in that factory would leave the direct-construction
+		// path to fail later, in `prmDocumentUrl()` — which builds the
+		// `resource_metadata` parameter of an RFC 9728 challenge, i.e. inside a
+		// 401 response path. Turning a configuration error into a failure on the
+		// failure path is the outcome this check exists to prevent.
+		//
+		// `AuthplaneClient.resource()` deliberately does *not* repeat the check:
+		// a JS stack trace already names the caller's frame alongside this
+		// constructor's, so a second call would add no diagnostic value and
+		// would be an unpinned duplicate of this one.
+		validateResourceIndicator(options.resource);
+
 		const allowedAlgorithms = options.allowedAlgorithms ?? [
 			...ALLOWED_ALGORITHMS,
 		];
@@ -177,8 +245,18 @@ export class AuthplaneResource {
 			);
 		}
 
+		// Gated beside the resource indicator, and for the same reason: this
+		// value's only sink is the `resource_metadata` parameter of a
+		// `WWW-Authenticate` challenge, so a malformed one would surface on the
+		// 401 path — a configuration error turning into a failure on the
+		// failure path.
+		if (options.resourceMetadataUrl !== undefined) {
+			validateResourceMetadataUrl(options.resourceMetadataUrl);
+		}
+
 		this.issuer = options.issuer;
 		this.resource = options.resource;
+		this.resourceMetadataUrlOverride = options.resourceMetadataUrl;
 		this.scopes = Object.freeze([...options.scopes]);
 		this.allowedAlgorithms = Object.freeze(allowedAlgorithms);
 		this.clockSkewSeconds = options.clockSkewSeconds ?? CLOCK_SKEW_SECONDS;
@@ -208,6 +286,7 @@ export class AuthplaneResource {
 
 		this.asCredentials = options.asCredentials;
 		this.revocationChecker = options.revocationChecker;
+		this.metadataCache = options.metadataCache;
 		this.getJwksCache = options.getJwksCache;
 
 		// Prepare introspection revocation checks eagerly so verify() stays fast.
@@ -216,31 +295,27 @@ export class AuthplaneResource {
 			this.isIntrospectionRevocation(this.revocationChecker) ||
 			this.isIntrospectionConfig(this.revocationChecker)
 		) {
-			if (this.isIntrospectionRevocation(this.revocationChecker)) {
-				if (!this.asCredentials) {
-					console.warn(
-						"[authplane] IntrospectionRevocation used without asCredentials; introspection requests will be unauthenticated.",
-					);
-				}
-				introspectionChecker = new IntrospectionChecker(
-					() => options.metadataCache.get(),
-					{
-						fetchSettings: options.fetchSettings,
-						clientId: this.asCredentials?.clientId,
-						clientSecret: this.asCredentials?.clientSecret,
-					},
-				);
-			} else {
-				const config = this.revocationChecker as IntrospectionConfig;
-				introspectionChecker = new IntrospectionChecker(
-					() => options.metadataCache.get(),
-					{
-						fetchSettings: options.fetchSettings,
-						clientId: config.clientId,
-						clientSecret: config.clientSecret,
-					},
+			const credentials: ASCredentials | IntrospectionConfig | undefined =
+				this.isIntrospectionRevocation(this.revocationChecker)
+					? this.asCredentials
+					: (this.revocationChecker as IntrospectionConfig);
+			// The unauthenticated RFC 7662 path stays reachable, but authserver
+			// >= 0.1.2 answers it with `active: false`, which verify() reads as
+			// "revoked" — so say so once, at construction, instead of letting every
+			// token fail with no server-side signal.
+			if (!credentials?.clientId || !credentials?.clientSecret) {
+				console.warn(
+					"[authplane] Introspection revocation configured without AS client credentials (asCredentials / clientId + clientSecret); introspection requests will be unauthenticated. authserver >= 0.1.2 answers unauthenticated introspection with active: false, so every token will be rejected as revoked. Configure a confidential client that is the issuing client or a runtime-client of this resource.",
 				);
 			}
+			introspectionChecker = new IntrospectionChecker(
+				() => options.metadataCache.get(),
+				{
+					fetchSettings: options.fetchSettings,
+					clientId: credentials?.clientId,
+					clientSecret: credentials?.clientSecret,
+				},
+			);
 		}
 
 		this.introspectionChecker = introspectionChecker;
@@ -268,8 +343,6 @@ export class AuthplaneResource {
 		token: string,
 		options: { dpopRequest?: DPoPRequestContext | undefined } = {},
 	): Promise<VerifiedClaims> {
-		const jwksCache = this.getJwksCache();
-
 		let header: ReturnType<typeof decodeProtectedHeader>;
 		try {
 			header = decodeProtectedHeader(token);
@@ -301,6 +374,14 @@ export class AuthplaneResource {
 				`Token type must be 'at+jwt', got '${String(typ)}'.`,
 			);
 		}
+
+		// Metadata is re-read here, on the ordinary verification path, because a
+		// resource server that only verifies tokens never calls an AS-facing
+		// operation. Without this the document read at construction would be the
+		// only one the process ever sees: `metadataRefreshSeconds` would never
+		// elapse into a refetch and a rotated `jwks_uri` would never be followed.
+		await this.refreshMetadata();
+		const jwksCache = this.getJwksCache();
 
 		let key = await jwksCache.getKeyByKid(kid, false, alg);
 		if (!key) {
@@ -361,11 +442,56 @@ export class AuthplaneResource {
 				isRevoked = false;
 			}
 			if (isRevoked) {
+				this.warnIntrospectionOwnershipOnce(claims.jti);
 				throw new TokenRevoked(`Token '${claims.jti}' has been revoked`);
 			}
 		}
 
 		return claims;
+	}
+
+	/**
+	 * A token that passed local JWT verification and then came back
+	 * `active: false` from introspection is either revoked or — under
+	 * authserver >= 0.1.2 — introspected by a client the AS does not treat as
+	 * its owner: only the issuing client or a runtime-client of the Resource
+	 * named in `aud` gets a real answer. The two are indistinguishable on the
+	 * wire, so point at the second cause once per resource; a revocation storm
+	 * must not turn into a log storm.
+	 */
+	private warnIntrospectionOwnershipOnce(jti: string): void {
+		if (this.introspectionOwnershipWarned || !this.introspectionChecker) {
+			return;
+		}
+		this.introspectionOwnershipWarned = true;
+		console.warn(
+			`[authplane] Introspection returned active: false for token jti=${jti} that passed local JWT verification. If the token was not revoked, the authorization server did not recognise this resource server as the token's owner: authserver >= 0.1.2 only answers the issuing client or a runtime-client of the Resource named in aud. Register it with: authserver admin resource runtime-client add --client-id <rs-client-id> --slug <resource-slug>. This warning is logged once per resource.`,
+		);
+	}
+
+	/**
+	 * Re-read the AS metadata document if the configured refresh interval has
+	 * elapsed.
+	 *
+	 * This is a cache read, not a fetch: `MetadataCache` only reaches the network
+	 * once its interval is up, so the cost per verification is a cache lookup.
+	 * Nothing is rebound when `jwks_uri` changes and there is no second cache to
+	 * swap in: the JWKS fetcher resolves the URI from this document on every
+	 * fetch, so committing a rotated document here is the whole of the handover.
+	 *
+	 * Failures are swallowed: keeping metadata current serves verification, it is
+	 * not a precondition for it. A refetch that fails leaves the last known good
+	 * document in place (`DocumentCache.get`), and a document that fails
+	 * validation must not take verification down with it.
+	 */
+	private async refreshMetadata(): Promise<void> {
+		try {
+			await this.metadataCache.get();
+		} catch (error) {
+			console.warn(
+				`[authplane] AS metadata refresh failed during verify; continuing with the last known metadata: ${String(error)}`,
+			);
+		}
 	}
 
 	private resolveRevocationChecker(): RevocationChecker | undefined {
@@ -612,9 +738,24 @@ export class AuthplaneResource {
 		});
 	}
 
-	/** RFC 9728 §3.1 — absolute URL of the Protected Resource Metadata document for this resource. */
+	/** RFC 9728 §3.1 — absolute URL of the Protected Resource Metadata document derived from this resource. */
 	public prmDocumentUrl(): string {
 		return oauthProtectedResourceMetadataDocumentUrl(this.resource);
+	}
+
+	/**
+	 * The URL to advertise as `resource_metadata` (RFC 9728 §5.1): the
+	 * configured {@link AuthplaneResourceOptions.resourceMetadataUrl} when one
+	 * is set, otherwise the URL derived from `resource`.
+	 *
+	 * This is what every challenge path reads, so the override reaches the 401,
+	 * the 403 and the DPoP challenges through one accessor rather than each
+	 * adapter resolving it again. {@link prmDocumentUrl} stays the derived URL
+	 * on purpose: it is what the SDK's own PRM handler is mounted at, and
+	 * advertising someone else's document must not move the local route.
+	 */
+	public resourceMetadataUrl(): string {
+		return this.resourceMetadataUrlOverride ?? this.prmDocumentUrl();
 	}
 
 	public async close(): Promise<void> {

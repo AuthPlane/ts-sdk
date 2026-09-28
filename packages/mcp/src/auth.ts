@@ -6,6 +6,7 @@ import {
 	buildDPoPRequestContext,
 	type DPoPProvider,
 	extractBearerToken,
+	errorResponseBody,
 	extractDpopHeaderValues,
 	type FetchSettings,
 	InsufficientScope,
@@ -29,13 +30,30 @@ import { AuthplaneTokenVerifier } from "./verifier.js";
  *   return { content: [{ type: "text", text: String(params.a + params.b) }] };
  * });
  * ```
+ *
+ * Raises core {@link InsufficientScope}, carrying the missing scope, so a host
+ * that maps `AuthplaneError` before dispatch — `authplaneOnError` in the Hono
+ * adapter, the NestJS exception filter — answers with `403` and
+ * `WWW-Authenticate: Bearer error="insufficient_scope", scope="<this scope>"`,
+ * which is the challenge a client steps up from. A plain `Error` reached none
+ * of those mappings and surfaced as a JSON-RPC internal error or a generic
+ * 500. `bearerAuth` is not one of those hosts for this throw — see below.
+ *
+ * **Where this runs matters.** Called inside a tool handler on the
+ * streamable-HTTP transport, the response has already begun and its status
+ * code is committed, so the failure can only come back as a JSON-RPC error on
+ * an HTTP 200 — no 403, no challenge, no step-up. Enforcement that must
+ * trigger step-up belongs pre-dispatch, at `bearerAuth`'s `requiredScopes`
+ * (or your own middleware) where the status line has not been written yet.
+ * In-handler, treat this as a defence-in-depth backstop: it fails the call
+ * closed and names the scope in the error, but it cannot produce the 403.
  */
 export function requireScope(
 	scope: string,
 	authInfo: AuthInfo | undefined,
 ): void {
 	if (!authInfo?.scopes?.includes(scope)) {
-		throw new Error(`Missing required scope: ${scope}`);
+		throw new InsufficientScope(`Missing required scope: ${scope}`, [scope]);
 	}
 }
 
@@ -94,6 +112,13 @@ export interface AuthplaneMcpAuth {
 	tokenVerifier: AuthplaneTokenVerifier;
 	bearerAuth: RequestHandler;
 	protectedResourceMetadataPath: string;
+	/**
+	 * URL advertised as `resource_metadata` on every challenge this adapter
+	 * emits. Pass it to the MCP SDK's own `requireBearerAuth({ verifier,
+	 * requiredScopes, resourceMetadataUrl })` when wiring that middleware
+	 * instead of `bearerAuth`, so both paths advertise the same document.
+	 */
+	protectedResourceMetadataUrl: string;
 	protectedResourceMetadata: ProtectedResourceMetadata;
 	protectedResourceMetadataHandler: RequestHandler;
 }
@@ -165,11 +190,20 @@ export async function authplaneMcpAuth(
 	if (options.asCredentials !== undefined) {
 		resourceOptions.asCredentials = options.asCredentials;
 	}
+	if (options.resourceMetadataUrl !== undefined) {
+		resourceOptions.resourceMetadataUrl = options.resourceMetadataUrl;
+	}
 
 	const verifier = client.resource(resourceOptions);
 	const tokenVerifier = new AuthplaneTokenVerifier(verifier);
-	const resourceMetadataUrl = verifier.prmDocumentUrl();
-	const protectedResourceMetadataPath = new URL(resourceMetadataUrl).pathname;
+	// Two different URLs on purpose. The challenge advertises whatever the
+	// resource is configured to advertise (`resourceMetadataUrl()`: the
+	// override when set, the derived URL otherwise); the route this adapter
+	// mounts the document at is always the derived one, since that is where a
+	// client that follows the *default* advertisement looks.
+	const resourceMetadataUrl = verifier.resourceMetadataUrl();
+	const protectedResourceMetadataPath = new URL(verifier.prmDocumentUrl())
+		.pathname;
 	const protectedResourceMetadata = verifier.prmResponse();
 
 	// DPoP `htu` (RFC 9449 §4.2) is the request target URI — origin + path.
@@ -252,7 +286,13 @@ export async function authplaneMcpAuth(
 					authInfo.scopes.includes(scope),
 				);
 				if (!hasAllScopes) {
-					throw new InsufficientScope("Insufficient scope");
+					// Carry the scopes on the error: that is what makes the
+					// requiredScopes fallback in wwwAuthenticate reachable from
+					// here, and it matches VerifiedClaims.requireScopes.
+					throw new InsufficientScope(
+						"Insufficient scope",
+						effectiveRequiredScopes,
+					);
 				}
 			}
 
@@ -276,23 +316,28 @@ export async function authplaneMcpAuth(
 					"WWW-Authenticate",
 					wwwAuthenticate(error, {
 						resourceMetadataUrl,
-						scope: effectiveRequiredScopes,
+						// Passed only when non-empty so the error's own
+						// requiredScopes can fill in — an explicit array,
+						// empty included, wins over the fallback. The throw
+						// site above now carries them too, so the two agree
+						// whichever way the error arrives. Matches the Hono
+						// and NestJS mappings.
+						...(effectiveRequiredScopes.length > 0
+							? { scope: effectiveRequiredScopes }
+							: {}),
 					}),
 				);
-				const errorCode =
-					error instanceof InsufficientScope
-						? "insufficient_scope"
-						: "invalid_token";
-				res.status(httpStatus(error)).json({
-					error: errorCode,
-					error_description: error.message,
-				});
+				// Body and challenge are composed from the same core helpers, so
+				// the code they name agrees and neither carries the exception's
+				// own message to a caller who has not authenticated.
+				res.status(httpStatus(error)).json(errorResponseBody(error));
 			} else {
-				// Fallback to a generic 500.
+				// Fallback to a generic 500. The description is a fixed string:
+				// this branch catches whatever the surrounding application threw,
+				// so the message is not the SDK's to vouch for.
 				res.status(500).json({
 					error: "server_error",
-					error_description:
-						error instanceof Error ? error.message : "Internal Server Error",
+					error_description: "Internal Server Error",
 				});
 			}
 		}
@@ -304,6 +349,7 @@ export async function authplaneMcpAuth(
 		tokenVerifier,
 		bearerAuth,
 		protectedResourceMetadataPath,
+		protectedResourceMetadataUrl: resourceMetadataUrl,
 		protectedResourceMetadata,
 		protectedResourceMetadataHandler,
 	};

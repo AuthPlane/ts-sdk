@@ -265,16 +265,28 @@ describe("AuthplaneTokenVerifier.verifyAccessToken error taxonomy", () => {
     expect((rejection as Error).cause).toBe(original);
   });
 
-  it("carries core's sanitised message through, stripping header-breaking characters", async () => {
-    const rejection = await adapterThrowing(
-      new TokenExpired('Token has expired: "exp" claim check\r\nInjected: yes'),
-    )
+  it("replaces core's message with the fixed description the host will publish", async () => {
+    // The MCP SDK's `requireBearerAuth` splices this message straight into
+    // `error_description="…"`, so whatever lands here reaches a caller who
+    // has not authenticated. It gets the per-error-code sentence, never
+    // core's — which names the claim that failed and, on an audience
+    // mismatch, the exact `aud` the resource expects.
+    const original = new TokenExpired(
+      'Token has expired: "exp" claim check\r\nInjected: yes',
+    );
+    const rejection = await adapterThrowing(original)
       .verifyAccessToken("t")
       .catch((e: unknown) => e);
 
     const message = (rejection as Error).message;
+    expect(message).toBe(
+      "The access token is missing or not valid for this resource",
+    );
+    expect(message).not.toMatch(/exp|Injected/);
+    // Nothing to sanitise either: the fixed sentences carry no character
+    // that could terminate the quoted-string or fold the header.
     expect(message).not.toMatch(/["\\\r\n]/);
-    expect(message).toContain("Token has expired");
-    expect(message).toContain("exp");
+    // The detail is not lost — it stays on `.cause` for the host to log.
+    expect((rejection as Error).cause).toBe(original);
   });
 });

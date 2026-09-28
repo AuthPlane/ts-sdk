@@ -95,6 +95,7 @@ export class VerifiedClaims {
 		if (!this.hasScope(scope)) {
 			throw new InsufficientScope(
 				`Token missing required scope '${scope}'. Token has scopes: ${this.scopes.join(", ")}`,
+				[scope],
 			);
 		}
 	}
@@ -107,9 +108,13 @@ export class VerifiedClaims {
 	 * Adapter middleware (`@authplane/hono` `bearerAuth`, `@authplane/nestjs`
 	 * `AuthplaneAuthGuard`) calls this so the union check has one canonical
 	 * implementation across the SDK. The thrown error names the missing
-	 * scope(s) and the scopes the token does carry — adapters surface this
-	 * verbatim in `error_description`, so a client can see why the request
-	 * was rejected without a separate log lookup.
+	 * scope(s) and the scopes the token does carry — for the resource server's
+	 * log and for a JSON body it chooses to emit. It does not reach the
+	 * `WWW-Authenticate` challenge, whose `error_description` is a fixed
+	 * sentence: naming the token's actual scopes to an unauthenticated caller
+	 * is disclosure. `scope="…"` is what tells the client what to step up to,
+	 * and the thrown error carries `required` so a host with no configured
+	 * scopes of its own can still emit it.
 	 */
 	public requireScopes(required: readonly string[]): void {
 		if (required.length === 0) return;
@@ -119,6 +124,10 @@ export class VerifiedClaims {
 		const present = this.scopes.length > 0 ? this.scopes.join(", ") : "(none)";
 		throw new InsufficientScope(
 			`Token missing required scope${missing.length > 1 ? "s" : ""} ${quoted}. Token has scopes: ${present}`,
+			// The full requested set, not just the missing ones: `scope="…"`
+			// names what the client should step up to, and a client holding a
+			// partial set needs the whole list to ask for it again.
+			required,
 		);
 	}
 
@@ -145,6 +154,9 @@ export class VerifiedClaims {
 	/**
 	 * RFC 8693 §4.4 `may_act` claim — identifies parties permitted to act on
 	 * behalf of the token subject. Returns `undefined` when absent.
+	 *
+	 * @deprecated authserver 0.2.0 no longer issues `may_act`; removed in the
+	 * next minor.
 	 */
 	public get mayAct(): Readonly<Record<string, unknown>> | undefined {
 		const value = this.raw.may_act;

@@ -7,6 +7,7 @@ Complete reference for the Authplane adapter for FastMCP. Starts with the quicks
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [`authplaneFastMcpAuth(options)` reference](#authplanefastmcpauthoptions-reference)
+- [Where the PRM document lives](#where-the-prm-document-lives)
 - [Session shape](#session-shape)
 - [Scope enforcement](#scope-enforcement)
 - [Resource URL from `baseUrl` + `mcpPath`](#resource-url-from-baseurl--mcppath)
@@ -88,6 +89,7 @@ The adapter produces:
 | `revocationChecker` | `RevocationChecker \| IntrospectionRevocation` (optional) | Enable real-time revocation checking. |
 | `inboundDPoP` | `InboundDPoPOptions` (optional) | Per-resource inbound DPoP policy (RFC 9449 §7.1 + RFC 9728 §2). Presence is the on/off switch for advertising DPoP support in PRM and for accepting DPoP-bound tokens. See [DPoP-bound tokens](#dpop-bound-tokens). |
 | `failClosed` | `boolean` (optional, default `false`) | When `true`, revocation-checker errors reject the token (`TokenRevoked`) instead of accepting it. |
+| `resourceMetadataUrl` | `string` (optional) | Absolute URL advertised as `resource_metadata=` on every challenge, overriding the URL derived from `resource`. See [Where the PRM document lives](#where-the-prm-document-lives). |
 | `allowedAlgorithms` | `string[]` (optional) | Allowed JWT `alg` values. Dangerous algorithms (`none`, `HS*`) are always rejected. Defaults to the SDK allow-list. |
 | `clockSkewSeconds` | `number` (optional) | Applied to `exp`/`nbf`/`iat` checks. DPoP proof age uses `inboundDPoP.clockSkewSeconds` independently. |
 
@@ -103,7 +105,20 @@ The adapter produces:
 | `authenticate` | FastMCP `authenticate` callback | Plug into `new FastMCP({ authenticate: auth.authenticate, ... })`. Parses the bearer (or `DPoP ...`) header, verifies the token, and returns the session. |
 | `oauth` | FastMCP `oauth` config | Plug into `new FastMCP({ oauth: auth.oauth, ... })`. Publishes the PRM. |
 | `protectedResourceMetadata` | `ProtectedResourceMetadata` | The RFC 9728 JSON payload. |
-| `protectedResourceMetadataUrl` | `string` | URL clients should fetch for the PRM. |
+| `protectedResourceMetadataUrl` | `string` | URL advertised as `resource_metadata=` — the configured `resourceMetadataUrl` when set, the URL derived from `resource` otherwise. |
+
+## Where the PRM document lives
+
+RFC 9728 does not say who has to host the metadata document, only what a client finds when it follows the `resource_metadata` parameter of a `WWW-Authenticate` challenge. Two topologies work.
+
+**(a) Resource-hosted — the default.** This server serves the document itself at the URL derived from `resource`, `/.well-known/oauth-protected-resource[/path]`, and every challenge points there. Nothing to configure. Pass `auth.oauth` to `new FastMCP({ oauth })` and FastMCP publishes it.
+
+**(b) AS-hosted.** `authserver` >= 0.2.0 serves an RFC 9728 document for every registered Resource at `<issuer>/.well-known/oauth-protected-resource/{ref}`, where `{ref}` is the Resource URI's path suffix (RFC 9728 §3.1) or its slug. Set `resourceMetadataUrl` to that URL and this server stops advertising its own; it only points at the AS's. Use it when the resource server cannot host well-known paths — a platform that owns `/.well-known`, a proxy that strips it, a resource mounted under a path it does not control.
+
+Only the advertisement moves. The `oauth` block still publishes this server's own document, and its `resource` member still names this server's identifier. So the two documents can be served side by side during a migration, and switching back is a config change.
+
+Whichever hosts it, RFC 9728 §3.3 binds the document to this server: the `resource` value **inside** the document must equal the URL clients call, byte for byte, or a conformant client discards the document — and the resource server then looks unreachable rather than misconfigured. So the Resource URI registered at the authorization server, the `resource` configured here, and this server's public URL must be the same string; a trailing slash or an `http`/`https` difference is enough to break it.
+
 
 ## Session shape
 
@@ -187,6 +202,14 @@ const auth = await authplaneFastMcpAuth({
 ```
 
 `IntrospectionRevocation.get()` returns the marker singleton; the adapter then calls `authserver`'s RFC 7662 introspection endpoint on every token verification, and tokens with `active: false` are rejected. Adds one round-trip per authenticated request. Custom `RevocationChecker` callbacks are supported for DB-backed allowlists.
+
+The introspecting client must be **confidential** (it needs a `clientSecret`) **and** either the client that was issued the token or a runtime-client of the Resource named in the token's `aud`. Since authserver 0.1.2 every other caller — a public (secret-less) client included — receives `{"active": false}`, which the SDK reads as "revoked", so a resource server introspecting with the wrong credentials silently rejects every token. Register the resource server on its Resource with:
+
+```bash
+authserver admin resource runtime-client add --client-id <rs-client-id> --slug <resource-slug>
+```
+
+A public client cannot introspect at all.
 
 ## DPoP-bound tokens
 
@@ -326,6 +349,20 @@ The MCP client receives:
 ```
 
 Consent errors without a `consentUrl` pass through unchanged; non-consent errors are re-thrown as-is.
+
+**Operator step.** For each MCP server that exchanges for a downstream resource it does not itself act as, the operator must allowlist the exchanging client on the target Resource:
+
+```http
+PATCH /admin/resources/{id}
+{"policy": {"exchange": {"allowed_client_ids": ["<exchanging-client-id>"]}}}
+```
+
+A client exchanging a token issued to itself, a fronted exchange and a Broker resource need nothing.
+
+Two failure answers from the AS are policy, not outages, and neither counts toward the circuit breaker:
+
+- `access_denied` (HTTP 403, `AccessDeniedError`) on a cross-client exchange means the operator has not allowlisted the exchanging client on the target Resource. Unlike `consent_required`, re-prompting the user will not fix it.
+- `invalid_target` (HTTP 400, `InvalidTargetError`, RFC 8707 §2.2) means the `resource` string does not match a granted resource exactly — the comparison is byte for byte, so a trailing slash counts.
 
 > **Limitation — fastmcp swallows `McpError` from tool handlers.** As of fastmcp `3.35.0`, the tool-call dispatch catches every error that is not a `UserError` and wraps it as `{ isError: true, content: [...] }` in the tool result. That means an `UrlElicitationRequiredError` thrown from `client.exchange()` inside `execute()` reaches the client as a tool error, not as a JSON-RPC `-32042` response — the example payload above is the canonical shape, not what fastmcp 3.35.0 actually sends. To surface `-32042` end-to-end today, use the lower-level `@authplane/mcp` adapter (which goes through the official MCP SDK transport and propagates `McpError` as JSON-RPC). Track upstream resolution before relying on this path in production.
 

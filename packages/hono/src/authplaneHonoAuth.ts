@@ -160,8 +160,14 @@ export interface AuthplaneHonoAuth<
 export async function authplaneHonoAuth<
 	E extends { Variables: HonoAuthVariables } = { Variables: HonoAuthVariables },
 >(options: AuthplaneHonoAuthOptions): Promise<AuthplaneHonoAuth<E>> {
-	const { requiredScopes, scopes, issuer, resource, realm, emitDownstreamChallenge } =
-		options;
+	const {
+		requiredScopes,
+		scopes,
+		issuer,
+		resource,
+		realm,
+		emitDownstreamChallenge,
+	} = options;
 
 	if (
 		options.replayStore !== undefined &&
@@ -174,14 +180,27 @@ export async function authplaneHonoAuth<
 
 	const resolvedScopes = scopes ?? [];
 	const resolvedRequiredScopes = requiredScopes ?? resolvedScopes;
-	const resourceOrigin = new URL(resource).origin;
 
 	const client = await buildAuthplaneClient({ issuer, options });
 	const verifier = client.resource(
 		buildResourceOptions(resource, resolvedScopes, options),
 	);
-	const resourceMetadataUrl = verifier.prmDocumentUrl();
-	const protectedResourceMetadataPath = new URL(resourceMetadataUrl).pathname;
+	// After `client.resource()`: the constructor's resource-indicator gate has
+	// already vouched that `resource` is an absolute URL, so this parse cannot
+	// throw — deriving the origin earlier would preempt the gate's
+	// RFC-grounded message with a bare "Invalid URL". Built from `protocol` +
+	// `host`, not `URL.origin`: `origin` is the literal string "null" for a
+	// non-special scheme, and this value anchors the DPoP `htu` — matching the
+	// mcp and fastmcp adapters.
+	const parsedResource = new URL(resource);
+	const resourceOrigin = `${parsedResource.protocol}//${parsedResource.host}`;
+	// Advertised vs. served: the challenges below carry
+	// `resourceMetadataUrl()` (the configured override when set), while the PRM
+	// handler stays mounted at the path derived from `resource` — advertising
+	// an AS-hosted document must not unmount the local one.
+	const resourceMetadataUrl = verifier.resourceMetadataUrl();
+	const protectedResourceMetadataPath = new URL(verifier.prmDocumentUrl())
+		.pathname;
 	const protectedResourceMetadata = verifier.prmResponse();
 
 	// `realm` and `emitDownstreamChallenge` are optional and this package builds
@@ -293,6 +312,9 @@ function buildResourceOptions(
 	}
 	if (options.failClosed !== undefined) {
 		resourceOptions.failClosed = options.failClosed;
+	}
+	if (options.resourceMetadataUrl !== undefined) {
+		resourceOptions.resourceMetadataUrl = options.resourceMetadataUrl;
 	}
 	if (options.inboundDPoP !== undefined || options.replayStore !== undefined) {
 		resourceOptions.inboundDPoP = {

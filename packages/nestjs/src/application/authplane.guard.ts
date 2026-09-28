@@ -69,12 +69,19 @@ export class AuthplaneAuthGuard implements CanActivate {
 		private readonly reflector: Reflector,
 	) {
 		try {
-			this.resourceOrigin = new URL(this.options.resource).origin;
+			// `protocol` + `host`, not `URL.origin`: `origin` is the literal
+			// string "null" for a non-special scheme, and this value is the
+			// trusted anchor for the DPoP `htu` — matching the mcp and fastmcp
+			// adapters. This parse cannot throw for a module-registered
+			// resource: `AuthplaneModule` derives the PRM path from it at
+			// registration and the `AuthplaneResource` constructor runs
+			// `validateResourceIndicator` before this guard is built. The
+			// catch is a backstop for a guard constructed directly around an
+			// unvalidated `resource`; it surfaces a `TypeError` with the inner
+			// `URL` failure preserved on `.cause` instead of a bare `Error`.
+			const parsed = new URL(this.options.resource);
+			this.resourceOrigin = `${parsed.protocol}//${parsed.host}`;
 		} catch (cause) {
-			// Mirror core `parseResourceUrl` in `@authplane/sdk/core/prm.ts`:
-			// a non-URL `resource` is a programmer-supplied-type violation, so
-			// surface it as `TypeError` with the inner `URL` failure preserved
-			// on `.cause` instead of a bare `Error`.
 			throw new TypeError(
 				`AuthplaneModule: 'resource' must be an absolute URL (got ${JSON.stringify(this.options.resource)})`,
 				{ cause },

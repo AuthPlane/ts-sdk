@@ -5,12 +5,20 @@ import {
 } from "../auth/errors.js";
 import { SSRFError } from "./fetching/ssrf.js";
 
-/** OAuth `error` codes where the AS responded correctly — do not trip the breaker. */
+/**
+ * OAuth `error` codes where the AS responded correctly — do not trip the breaker.
+ *
+ * `access_denied` (403, exchanging client not allowlisted on the target
+ * Resource) and `invalid_target` (400, `resource` does not match a granted
+ * resource byte for byte) are policy answers, not outages.
+ */
 const OAUTH_ERRORS_NO_CIRCUIT = new Set([
+	"access_denied",
 	"consent_required",
 	"interaction_required",
 	"invalid_grant",
 	"invalid_scope",
+	"invalid_target",
 	"invalid_dpop_proof",
 	"invalid_request",
 	"unsupported_grant_type",

@@ -1489,15 +1489,43 @@ conformanceCase(
 	},
 );
 
+/**
+ * Explicit timeout for the jwks_uri rotation cases.
+ *
+ * The case waits out a real 3 s refresh interval, so its wall time is ~3.2 s
+ * against Vitest's 5 s default — and nothing in this package overrides that
+ * default. Measured at 3.23 s and 3.21 s for the two registrations in a full
+ * suite run, which leaves under 1.8 s of headroom for two ES256 keygens, six
+ * verifications and eight loopback round trips on a loaded machine. An
+ * overrun does not degrade to a skip — it fails the run, and because Vitest
+ * stops awaiting the case rather than throwing into it, no result record is
+ * written: the report pairs a non-zero exit status with a case table that
+ * reads not_run, or green off the other module's record. Hence room, not a
+ * margin.
+ */
+const ROTATION_CASE_TIMEOUT_MS = 15_000;
+
 conformanceCase(
 	"rfc8414-jwks-uri-rotation-must-reconfigure-jwks-cache",
 	"RFC8414: jwks_uri rotation reconfigures JWKS cache",
 	async () => {
 		// Thin re-run of the RFC 8414 file's test so this duplicate registration
-		// records the same outcome in the conformance report.
+		// records the same outcome in the conformance report. Kept in step with it:
+		// a real configured refresh interval the test waits out, ordinary verify()
+		// traffic only, and the withdrawn URI answering 410 after the rotation.
+		const METADATA_REFRESH_SECONDS = 3;
+		const METADATA_PATH = "/.well-known/oauth-authorization-server";
+		const JWKS_V1_PATH = "/jwks-v1.json";
+		const JWKS_V2_PATH = "/jwks-v2.json";
+
 		const v1 = await generateEs256Keypair("key-v1");
 		const v2 = await generateEs256Keypair("key-v2");
-		let currentJwksUriPath = "/jwks-v1.json";
+
+		let currentJwksUriPath = JWKS_V1_PATH;
+		const requests: string[] = [];
+		const countOf = (path: string): number =>
+			requests.filter((seen) => seen === path).length;
+
 		const { createServer } = await import("node:http");
 		const server = createServer();
 		await new Promise<void>((resolve) =>
@@ -1505,8 +1533,10 @@ conformanceCase(
 		);
 		const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 		server.on("request", (req, res) => {
+			const url = req.url ?? "";
+			requests.push(url);
 			res.setHeader("content-type", "application/json");
-			if (req.url === "/.well-known/oauth-authorization-server") {
+			if (url === METADATA_PATH) {
 				res.end(
 					JSON.stringify({
 						issuer: origin,
@@ -1515,11 +1545,16 @@ conformanceCase(
 				);
 				return;
 			}
-			if (req.url === "/jwks-v1.json") {
+			if (url === JWKS_V1_PATH) {
+				if (currentJwksUriPath !== JWKS_V1_PATH) {
+					res.statusCode = 410;
+					res.end();
+					return;
+				}
 				res.end(JSON.stringify(v1.jwks));
 				return;
 			}
-			if (req.url === "/jwks-v2.json") {
+			if (url === JWKS_V2_PATH) {
 				res.end(JSON.stringify(v2.jwks));
 				return;
 			}
@@ -1530,24 +1565,75 @@ conformanceCase(
 			const client = await AuthplaneClient.create({
 				issuer: origin,
 				fetchSettings: NO_SSRF,
-				metadataRefreshSeconds: 0,
+				metadataRefreshSeconds: METADATA_REFRESH_SECONDS,
+				jwksRefreshSeconds: 300,
 			});
 			try {
-				currentJwksUriPath = "/jwks-v2.json";
-				const privateAccess = client as unknown as {
-					metadataCache: { get(force?: boolean): Promise<unknown> };
-				};
-				await privateAccess.metadataCache.get(true);
-				await new Promise<void>((resolve) => setTimeout(resolve, 50));
-				const token = await createTokenFactory(v2)({
-					iss: origin,
-					aud: `${origin}/api`,
-				});
 				const resource = client.resource({
 					resource: `${origin}/api`,
 					scopes: ["read:data"],
 				});
-				await resource.verify(token);
+				const before = await resource.verify(
+					await createTokenFactory(v1)({
+						iss: origin,
+						aud: `${origin}/api`,
+					}),
+				);
+				expect(before.kid).toBe("key-v1");
+				expect(countOf(JWKS_V1_PATH)).toBeGreaterThan(0);
+
+				currentJwksUriPath = JWKS_V2_PATH;
+
+				const metadataReadsBefore = countOf(METADATA_PATH);
+				await resource.verify(
+					await createTokenFactory(v1)({
+						iss: origin,
+						aud: `${origin}/api`,
+					}),
+				);
+				expect(countOf(METADATA_PATH)).toBe(metadataReadsBefore);
+
+				await new Promise((resolve) =>
+					setTimeout(resolve, METADATA_REFRESH_SECONDS * 1000 + 200),
+				);
+
+				// The interval has elapsed. This verification cannot miss its `kid`
+				// — key-v1 is still in the cached JWKS document, which carries its own
+				// 300 s interval — so nothing here can force a JWKS fetch, and the only
+				// thing that can re-read metadata is the verification path itself. That
+				// read is what the requirement is about: an SDK that reads metadata only
+				// at construction, or only when a `kid` lookup misses, fails here.
+				const metadataReadsBeforeElapse = countOf(METADATA_PATH);
+				const v2FetchesBeforeElapse = countOf(JWKS_V2_PATH);
+				const stillCached = await resource.verify(
+					await createTokenFactory(v1)({
+						iss: origin,
+						aud: `${origin}/api`,
+					}),
+				);
+				expect(stillCached.kid).toBe("key-v1");
+				expect(countOf(METADATA_PATH)).toBeGreaterThan(
+					metadataReadsBeforeElapse,
+				);
+				expect(countOf(JWKS_V2_PATH)).toBe(v2FetchesBeforeElapse);
+
+				const rotated = await resource.verify(
+					await createTokenFactory(v2)({
+						iss: origin,
+						aud: `${origin}/api`,
+					}),
+				);
+				expect(rotated.kid).toBe("key-v2");
+				expect(countOf(JWKS_V2_PATH)).toBeGreaterThan(0);
+
+				const withdrawnReads = countOf(JWKS_V1_PATH);
+				await resource.verify(
+					await createTokenFactory(v2)({
+						iss: origin,
+						aud: `${origin}/api`,
+					}),
+				);
+				expect(countOf(JWKS_V1_PATH)).toBe(withdrawnReads);
 			} finally {
 				await client.close();
 			}
@@ -1555,6 +1641,36 @@ conformanceCase(
 			await new Promise<void>((resolve) => server.close(() => resolve()));
 		}
 	},
+	{
+		level: "partial",
+		gaps: [
+			"A same-'kid' rotation is not demonstrated here, and the reason is " +
+				"this case's interval ratio rather than the 'kid'. The JWKS URI is " +
+				"re-resolved from the metadata document on every JWKS fetch, so a " +
+				"rotation is followed under an unchanged 'kid' as well, once the " +
+				"JWKS cache's own interval expires: worst case " +
+				"metadataRefreshSeconds + jwksRefreshSeconds, which stays inside " +
+				"the requirement's bound of two metadata refresh intervals whenever " +
+				"jwksRefreshSeconds <= metadataRefreshSeconds — as the SDK defaults " +
+				"(300 / 3600) do. This case configures the inverse (300 / 3), so " +
+				"the cached JWKS document outlives the wait and a lookup its " +
+				"unchanged 'kid' satisfies never re-drives key retrieval. Under " +
+				"that ratio, and only under it, a same-'kid' rotation falls outside " +
+				"the bound.",
+		],
+		note:
+			"Ordinary verification traffic does drive the rotation: metadata is " +
+			"re-read on the verification path (core/resource.ts refreshMetadata, " +
+			"called unconditionally from verify) and the JWKS URI is resolved from " +
+			"the validated metadata document on every JWKS fetch " +
+			"(core/client.ts initializeCaches), with no force-refresh argument, " +
+			"hook or reflection involved. The interval-driven read is asserted on a " +
+			"verification that cannot miss its 'kid', so it is pinned independently " +
+			"of the forced re-read a 'kid' miss performs — removing the read from " +
+			"the verification path fails this case. What is not demonstrated is a " +
+			"rotation under an unchanged 'kid' — see the gap.",
+	},
+	ROTATION_CASE_TIMEOUT_MS,
 );
 
 conformanceCase(

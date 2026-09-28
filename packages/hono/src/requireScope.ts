@@ -50,7 +50,7 @@ export function requireScope(
 	if (!auth) {
 		// Fail-closed for a forgotten `app.use(bearerAuth)`: no claims to
 		// delegate to, so synthesise the error directly.
-		throw new InsufficientScope(`Missing required scope: ${scope}`);
+		throw new InsufficientScope(`Missing required scope: ${scope}`, [scope]);
 	}
 	// Auth present but lacks the scope: delegate to the core helper so the
 	// `InsufficientScope` message carries the missing scope and the scopes

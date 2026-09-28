@@ -155,13 +155,18 @@ export class AuthplaneModule {
 		// the resource URL is not knowable synchronously.
 		const prmPath = hints.prmPath ?? syncCapture?.prmPath;
 		const controllers = prmPath ? [buildPrmController(prmPath)] : [];
-		if (controllers.length === 0) {
+		if (controllers.length === 0 && syncCapture?.resourceRejected !== true) {
 			// RFC 9728 discovery is required for many OAuth client flows; if
 			// we drop the controller silently the operator only finds out
 			// when a client fails to bootstrap. Route through Nest's Logger
 			// so the message lands in the application's configured log sink
 			// — `console.warn` would be suppressed by some PaaS log
 			// pipelines.
+			//
+			// Suppressed when the resource itself was rejected: the advice
+			// below is a dead end there — supplying `hints.prmPath` registers
+			// the controller and the resource provider still throws — and
+			// `compile()` is about to report the real reason.
 			new Logger("AuthplaneModule").warn(
 				"PRM controller not registered — RFC 9728 discovery is disabled. " +
 					"Pass `hints.prmPath` to `forRootAsync` (or use `forRoot` with a synchronous factory) to expose the metadata document.",
@@ -231,6 +236,13 @@ function buildOptionsProvider(
 interface SyncFactoryCapture {
 	readonly options: AuthplaneModuleOptions;
 	readonly prmPath: string | undefined;
+	/**
+	 * `resource` was configured but the RFC 8707 §2 gate rejected it, so no
+	 * path could be derived. Distinct from `prmPath === undefined` for want of
+	 * a resource, and the registration block reads it to stay quiet: the
+	 * resource provider will throw the real error through Nest's bootstrap.
+	 */
+	readonly resourceRejected: boolean;
 }
 
 /**
@@ -263,15 +275,17 @@ function inspectSyncFactory(
 	if (result instanceof Promise) return undefined;
 	const options = result as AuthplaneModuleOptions;
 	let prmPath: string | undefined;
+	let resourceRejected = false;
 	const resource = options.resource;
 	if (typeof resource === "string" && resource.length > 0) {
 		try {
 			prmPath = oauthProtectedResourceMetadataPath(resource);
 		} catch {
 			prmPath = undefined;
+			resourceRejected = true;
 		}
 	}
-	return { options, prmPath };
+	return { options, prmPath, resourceRejected };
 }
 
 async function buildAuthplaneClient(
@@ -347,6 +361,9 @@ function buildResourceOptions(
 	}
 	if (options.failClosed !== undefined) {
 		resourceOptions.failClosed = options.failClosed;
+	}
+	if (options.resourceMetadataUrl !== undefined) {
+		resourceOptions.resourceMetadataUrl = options.resourceMetadataUrl;
 	}
 	if (options.inboundDPoP !== undefined) {
 		resourceOptions.inboundDPoP = options.inboundDPoP;

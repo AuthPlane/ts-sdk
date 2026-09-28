@@ -3,7 +3,13 @@ import type { IncomingHttpHeaders } from "node:http";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { BlockList, isIP } from "node:net";
-import * as ipaddr from "ipaddr.js";
+// Default import, not a namespace import. ipaddr.js is CommonJS with no
+// `exports` map, so under Node's own ESM loader the namespace object carries
+// only `default` and `ipaddr.parse` is `undefined`. Vitest's interop papers
+// over the difference, which is why a unit test cannot catch a regression
+// here; tests/core/ssrfEsmInterop.test.ts runs the built output under the
+// real loader instead.
+import ipaddr from "ipaddr.js";
 
 const DEFAULT_MAX_SIZE = 65_536;
 const DEFAULT_TIMEOUT_SECONDS = 10;
@@ -121,22 +127,40 @@ function parseEmbeddedIpv4From6to4(ip: string): string | undefined {
 	return octets.join(".");
 }
 
+/**
+ * Parse an IP, or `undefined` when the string is not one.
+ *
+ * The only entry point to `ipaddr.parse` in this module, so the distinction it
+ * makes cannot be forgotten at a future call site: `ipaddr.parse` rejects a
+ * malformed address with a plain `Error`, which is the one failure a caller
+ * may read as "not an address". A `TypeError` means the call never happened —
+ * `ipaddr` resolved to something with no `parse` function, as it did under
+ * Node ESM before the default import — and swallowing that turns a broken
+ * import into a guard that silently rejects every address. It is rethrown
+ * here rather than left to each caller's `catch`.
+ */
+function parseIp(ip: string): ipaddr.IPv4 | ipaddr.IPv6 | undefined {
+	try {
+		return ipaddr.parse(ip);
+	} catch (error) {
+		if (error instanceof TypeError) {
+			throw error;
+		}
+		return undefined;
+	}
+}
+
 function parseEmbeddedIpv4FromTeredo(ip: string):
 	| {
 			server: string;
 			client: string;
 	  }
 	| undefined {
-	let parsed: ipaddr.IPv6;
-	try {
-		const addr = ipaddr.parse(ip);
-		if (!(addr instanceof ipaddr.IPv6)) {
-			return undefined;
-		}
-		parsed = addr;
-	} catch {
+	const addr = parseIp(ip);
+	if (!(addr instanceof ipaddr.IPv6)) {
 		return undefined;
 	}
+	const parsed = addr;
 
 	if (parsed.range() !== "teredo") {
 		return undefined;
@@ -209,10 +233,8 @@ export function isIpAllowed(
 		allowPrivateNetworks?: boolean | undefined;
 	} = {},
 ): boolean {
-	let parsed: ipaddr.IPv4 | ipaddr.IPv6;
-	try {
-		parsed = ipaddr.parse(ip);
-	} catch {
+	const parsed = parseIp(ip);
+	if (parsed === undefined) {
 		return false;
 	}
 

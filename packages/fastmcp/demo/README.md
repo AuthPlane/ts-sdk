@@ -14,16 +14,14 @@ Tokens must carry the scope for the specific tool being called. A token with onl
 ## Prerequisites
 
 - Node.js 22+
-- The **authserver authorization server** running locally with these token settings:
-  - `AUTHPLANE_CLIENT_CREDENTIALS_ENABLED=true`
-  - `AUTHPLANE_TOKEN_EXCHANGE_ENABLED=true`
-  - `AUTHPLANE_DPOP_ENABLED=true`
+- The **authserver authorization server** (0.2.0 — client credentials, token exchange and DPoP are on by default since 0.2.0) running locally with:
   - `AUTHPLANE_TOKEN_EXCHANGE_ALLOW_SELF_EXCHANGE=true` (required when the same client performs both `client_credentials` and `token_exchange`, as in `demo-fastmcp-dpop.ts`)
 
-Start `authserver` with Docker Compose from the `authserver` repository:
+Start `authserver` with Docker Compose from the `authserver` repository, at the `v0.2.0` tag:
 
   ```bash
   cd /path/to/authserver
+  git checkout v0.2.0
   export AUTHPLANE_SESSION_SECRET="$(openssl rand -hex 32)"
   export AUTHPLANE_ADMIN_API_KEY="$(openssl rand -hex 32)"
   docker compose -f deploy/docker-compose.sqlite.yml up -d --build
@@ -77,6 +75,6 @@ MCP Client ──Bearer JWT──► mcpserver.ts (port 8080)
 
 **`authplaneFastMcpAuth()`** — wires up the verifier and auth provider in one call. The `scopes` list advertises supported scopes in the Protected Resource Metadata (`/.well-known/oauth-protected-resource`); it does **not** require all scopes to be present in every token.
 
-**`IntrospectionRevocation`** — enables RFC 7662 token introspection on every `verify()` call using the adapter-supplied `asCredentials`. When `active: false` is returned, the token is rejected.
+**`IntrospectionRevocation`** — enables RFC 7662 token introspection on every `verify()` call using the adapter-supplied `asCredentials`. When `active: false` is returned, the token is rejected. The demo client must be confidential and either the issuing client or a runtime-client of the resource (`authserver admin resource runtime-client add --client-id <client-id> --slug <resource-slug>`); since authserver 0.1.2 any other caller gets `active: false` and every token is rejected.
 
 > The MCP-adapter equivalent of this demo also ships a `consent_demo` tool that surfaces MCP's URL elicitation flow (`-32042`). It is intentionally **not** included here: fastmcp 3.35.0 catches every non-`UserError` thrown from a tool handler and wraps it as `{ isError: true, content: [...] }`, so a `UrlElicitationRequiredError` thrown from `client.exchange()` would never reach the JSON-RPC wire. Use the lower-level `@authplane/mcp` adapter to demo the flow end-to-end. See `packages/fastmcp/docs/user-guide.md` → URL elicitation for the full Limitation note.

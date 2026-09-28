@@ -115,6 +115,46 @@ describe("bearerAuth — happy path", () => {
 	});
 });
 
+describe("bearerAuth — documented resourceOrigin recipe", () => {
+	it("anchors the DPoP htu at the resource for a hand-wired non-special scheme", async () => {
+		// `BearerAuthOptions.resourceOrigin` documents the recipe
+		// `${u.protocol}//${u.host}` from `new URL(options.resource)` —
+		// deliberately NOT `URL.origin`, which is the literal string "null"
+		// for a non-special scheme such as `mcp:` (an identifier the
+		// resource-indicator gate accepts) and would have the guard reject
+		// every DPoP-bound request. The factory computes this value itself;
+		// this test wires `bearerAuth` by hand the way an integrator following
+		// the JSDoc would, so the documented recipe is pinned, not just the
+		// adapter-computed one.
+		const verifyMock = vi.fn(async () => buildClaims());
+		const verifier = { verify: verifyMock } as unknown as AuthplaneResource;
+		const u = new URL("mcp://api.example.com/mcp");
+		expect(u.origin).toBe("null"); // the trap the recipe avoids
+
+		const app = new Hono<{ Variables: HonoAuthVariables }>();
+		app.use(
+			"/mcp",
+			bearerAuth({ verifier, resourceOrigin: `${u.protocol}//${u.host}` }),
+		);
+		app.post("/mcp", (c) => c.json({ ok: true }));
+
+		const response = await app.request("/mcp", {
+			method: "POST",
+			headers: {
+				Authorization: "Bearer valid_jwt",
+				DPoP: "eyJ.proof.value",
+			},
+		});
+
+		expect(response.status).toBe(200);
+		expect(verifyMock).toHaveBeenCalledWith("valid_jwt", {
+			dpopRequest: expect.objectContaining({
+				url: "mcp://api.example.com/mcp",
+			}),
+		});
+	});
+});
+
 describe("bearerAuth — error paths", () => {
 	function buildApp(
 		overrides: {
@@ -151,11 +191,11 @@ describe("bearerAuth — error paths", () => {
 
 		expect(response.status).toBe(401);
 		expect(response.headers.get("WWW-Authenticate")).toBe(
-			'Bearer error="invalid_token", error_description="Missing Authorization header"',
+			'Bearer error="invalid_token", error_description="The access token is missing or not valid for this resource"',
 		);
 		await expect(response.json()).resolves.toEqual({
 			error: "invalid_token",
-			error_description: "Missing Authorization header",
+			error_description: "The access token is missing or not valid for this resource",
 		});
 	});
 
@@ -169,7 +209,7 @@ describe("bearerAuth — error paths", () => {
 
 		expect(response.status).toBe(401);
 		expect(response.headers.get("WWW-Authenticate")).toBe(
-			'Bearer error="invalid_token", error_description="Invalid Authorization header format, expected \'Bearer TOKEN\' or \'DPoP TOKEN\'"',
+			'Bearer error="invalid_token", error_description="The access token is missing or not valid for this resource"',
 		);
 	});
 
@@ -187,7 +227,7 @@ describe("bearerAuth — error paths", () => {
 
 		expect(response.status).toBe(401);
 		expect(response.headers.get("WWW-Authenticate")).toBe(
-			'Bearer error="invalid_token", error_description="bad signature"',
+			'Bearer error="invalid_token", error_description="The access token is missing or not valid for this resource"',
 		);
 	});
 
@@ -206,7 +246,7 @@ describe("bearerAuth — error paths", () => {
 		expect(response.status).toBe(401);
 		await expect(response.json()).resolves.toEqual({
 			error: "invalid_token",
-			error_description: "Token has expired",
+			error_description: "The access token is missing or not valid for this resource",
 		});
 	});
 
@@ -225,7 +265,7 @@ describe("bearerAuth — error paths", () => {
 		expect(response.status).toBe(401);
 		await expect(response.json()).resolves.toEqual({
 			error: "invalid_token",
-			error_description: "Token has no expiration time",
+			error_description: "The access token is missing or not valid for this resource",
 		});
 	});
 
@@ -244,7 +284,7 @@ describe("bearerAuth — error paths", () => {
 		expect(response.status).toBe(503);
 		await expect(response.json()).resolves.toEqual({
 			error: "invalid_token",
-			error_description: "JWKS endpoint unreachable",
+			error_description: "The access token is missing or not valid for this resource",
 		});
 	});
 
@@ -263,7 +303,7 @@ describe("bearerAuth — error paths", () => {
 		expect(response.status).toBe(503);
 		await expect(response.json()).resolves.toEqual({
 			error: "invalid_token",
-			error_description: "AS metadata endpoint unreachable",
+			error_description: "The access token is missing or not valid for this resource",
 		});
 	});
 
@@ -280,15 +320,16 @@ describe("bearerAuth — error paths", () => {
 		expect(response.status).toBe(403);
 		// bearerAuth delegates to core claims.requireScopes, whose message names
 		// the missing scope (`tools/delete`) and the scopes the token does
-		// carry — verbatim into both the JSON body and the WWW-Authenticate
-		// challenge's `error_description=`.
+		// carry. That message reaches the JSON body; the challenge carries the
+		// fixed description instead, because it answers a caller who has not
+		// authenticated. `scope=` is what tells the client what to step up to.
 		expect(response.headers.get("WWW-Authenticate")).toBe(
-			`Bearer error="insufficient_scope", error_description="Token missing required scope 'tools/delete'. Token has scopes: tools/add, tools/echo", scope="tools/add tools/delete"`,
+			`Bearer error="insufficient_scope", error_description="The access token does not carry the scope this operation requires", scope="tools/add tools/delete"`,
 		);
 		await expect(response.json()).resolves.toEqual({
 			error: "insufficient_scope",
 			error_description:
-				"Token missing required scope 'tools/delete'. Token has scopes: tools/add, tools/echo",
+				"The access token does not carry the scope this operation requires",
 		});
 	});
 
@@ -315,7 +356,7 @@ describe("bearerAuth — error paths", () => {
 
 		expect(response.status).toBe(401);
 		expect(response.headers.get("WWW-Authenticate")).toBe(
-			'Bearer error="invalid_token", error_description="Missing Authorization header", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"',
+			'Bearer error="invalid_token", error_description="The access token is missing or not valid for this resource", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"',
 		);
 	});
 
@@ -517,7 +558,7 @@ describe("bearerAuth — downstream requireScope challenge (zero app wiring)", (
 
 		expect(response.status).toBe(403);
 		expect(response.headers.get("WWW-Authenticate")).toBe(
-			'Bearer error="insufficient_scope", error_description="Token missing required scope \'tools/delete_thing\'. Token has scopes: tools/add", scope="tools/delete_thing"',
+			'Bearer error="insufficient_scope", error_description="The access token does not carry the scope this operation requires", scope="tools/delete_thing"',
 		);
 		// The zero-config rewrite must still emit a JSON body, not inherit the
 		// content-type of whatever the guarded handler was about to return.
@@ -525,7 +566,7 @@ describe("bearerAuth — downstream requireScope challenge (zero app wiring)", (
 		await expect(response.json()).resolves.toEqual({
 			error: "insufficient_scope",
 			error_description:
-				"Token missing required scope 'tools/delete_thing'. Token has scopes: tools/add",
+				"The access token does not carry the scope this operation requires",
 		});
 	});
 
@@ -629,12 +670,12 @@ describe("bearerAuth — emitDownstreamChallenge", () => {
 
 		expect(response.status).toBe(403);
 		expect(response.headers.get("WWW-Authenticate")).toBe(
-			'Bearer error="insufficient_scope", error_description="Token missing required scope \'tools/delete_thing\'. Token has scopes: tools/add", scope="tools/delete_thing"',
+			'Bearer error="insufficient_scope", error_description="The access token does not carry the scope this operation requires", scope="tools/delete_thing"',
 		);
 		await expect(response.json()).resolves.toEqual({
 			error: "insufficient_scope",
 			error_description:
-				"Token missing required scope 'tools/delete_thing'. Token has scopes: tools/add",
+				"The access token does not carry the scope this operation requires",
 		});
 	});
 
@@ -735,7 +776,7 @@ describe("bearerAuth — downstream error that rejects next() (app onError re-th
 
 		expect(response.status).toBe(403);
 		expect(response.headers.get("WWW-Authenticate")).toBe(
-			'Bearer error="insufficient_scope", error_description="Token missing required scope \'tools/delete_thing\'. Token has scopes: tools/add", scope="tools/delete_thing"',
+			'Bearer error="insufficient_scope", error_description="The access token does not carry the scope this operation requires", scope="tools/delete_thing"',
 		);
 	});
 
@@ -810,12 +851,12 @@ describe("bearerAuth — WWW-Authenticate guard against double-emit", () => {
 		// comma-joined value; exact equality to the single expected challenge
 		// proves the guard suppressed the middleware's second write.
 		expect(response.headers.get("WWW-Authenticate")).toBe(
-			'Bearer error="insufficient_scope", error_description="Token missing required scope \'tools/delete_thing\'. Token has scopes: tools/add", scope="tools/delete_thing"',
+			'Bearer error="insufficient_scope", error_description="The access token does not carry the scope this operation requires", scope="tools/delete_thing"',
 		);
 		await expect(response.json()).resolves.toEqual({
 			error: "insufficient_scope",
 			error_description:
-				"Token missing required scope 'tools/delete_thing'. Token has scopes: tools/add",
+				"The access token does not carry the scope this operation requires",
 		});
 	});
 

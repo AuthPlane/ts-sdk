@@ -51,6 +51,24 @@ describe("buildRequestUrl — htu pinned to the configured resource origin", () 
 			}),
 		).toBe("https://api.example.com/mcp");
 	});
+
+	it("yields a resource-anchored htu when resourceOrigin follows the documented recipe", () => {
+		// `BuildRequestUrlParams.resourceOrigin` documents the recipe
+		// `${u.protocol}//${u.host}` from `new URL(resource)` — deliberately
+		// NOT `URL.origin`, which is the literal string "null" for a
+		// non-special scheme such as `mcp:` (an identifier the
+		// resource-indicator gate accepts) and would anchor the htu at
+		// "null/mcp". This pins the recipe as documented, computed by hand
+		// the way an external caller would.
+		const u = new URL("mcp://api.example.com/mcp");
+		expect(u.origin).toBe("null"); // the trap the recipe avoids
+		expect(
+			buildRequestUrl({
+				resourceOrigin: `${u.protocol}//${u.host}`,
+				pathAndQuery: "/mcp",
+			}),
+		).toBe("mcp://api.example.com/mcp");
+	});
 });
 
 describe("pathAndQueryOf", () => {

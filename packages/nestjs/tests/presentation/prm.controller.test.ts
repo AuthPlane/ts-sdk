@@ -17,6 +17,8 @@ describe("buildPrmController", () => {
 			prmResponse: () => body,
 			prmDocumentUrl: () =>
 				"https://api.example.com/.well-known/oauth-protected-resource/mcp",
+			resourceMetadataUrl: () =>
+				"https://api.example.com/.well-known/oauth-protected-resource/mcp",
 		};
 	}
 

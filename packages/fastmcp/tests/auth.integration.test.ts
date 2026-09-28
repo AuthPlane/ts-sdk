@@ -92,6 +92,9 @@ describe("authplaneFastMcpAuth integration", () => {
       prmDocumentUrl: vi.fn(
         () => `${baseUrl}/.well-known/oauth-protected-resource/mcp`,
       ),
+      resourceMetadataUrl: vi.fn(
+        () => `${baseUrl}/.well-known/oauth-protected-resource/mcp`,
+      ),
       close: vi.fn(async () => undefined),
     } as unknown as AuthplaneResource;
 

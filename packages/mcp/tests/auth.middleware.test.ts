@@ -65,6 +65,9 @@ describe("authplaneMcpAuth bearerAuth middleware", () => {
       prmDocumentUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
+      resourceMetadataUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
     } as unknown as AuthplaneResource;
 
     const mockClient = {
@@ -235,7 +238,10 @@ describe("authplaneMcpAuth bearerAuth middleware", () => {
     );
   });
 
-  it("returns 401 with 'Bearer TOKEN' message on unknown scheme", async () => {
+  it("answers an unknown scheme with the fixed description, not core's message", async () => {
+    // The body travels to the same unauthenticated caller as the challenge,
+    // so it carries the per-error-code sentence rather than core's own
+    // "expected 'Bearer TOKEN'", which names SDK internals.
     const auth = await buildAuth();
     const req: MockReq = { headers: { authorization: "Basic abc" } };
     const res = createRes();
@@ -244,9 +250,12 @@ describe("authplaneMcpAuth bearerAuth middleware", () => {
     await auth.bearerAuth(req as never, res as never, next);
 
     expect(res.statusCode).toBe(401);
-    expect((res.body as { error_description: string }).error_description).toMatch(
-      /expected 'Bearer TOKEN'/,
+    const body = res.body as { error: string; error_description: string };
+    expect(body.error).toBe("invalid_token");
+    expect(body.error_description).toBe(
+      "The access token is missing or not valid for this resource",
     );
+    expect(body.error_description).not.toMatch(/Bearer TOKEN/);
   });
 
   it("returns 401 when authorization header is an array (multiple values)", async () => {
@@ -293,9 +302,15 @@ describe("authplaneMcpAuth bearerAuth middleware", () => {
     const challenge = res.headers["WWW-Authenticate"] ?? "";
     expect(challenge).toMatch(/^Bearer /);
     expect(challenge).toContain('error="invalid_token"');
-    expect((res.body as { error_description: string }).error_description).toMatch(
-      /expired/,
+    // Neither half of the response repeats core's message: "expired" would
+    // tell an unauthenticated caller which check rejected the token.
+    const body = res.body as { error: string; error_description: string };
+    expect(body.error).toBe("invalid_token");
+    expect(body.error_description).toBe(
+      "The access token is missing or not valid for this resource",
     );
+    expect(body.error_description).not.toMatch(/expired/i);
+    expect(challenge).not.toMatch(/expired/i);
   });
 
   it("rejects requests carrying two DPoP headers delivered as a string[] (raw-headers shape)", async () => {

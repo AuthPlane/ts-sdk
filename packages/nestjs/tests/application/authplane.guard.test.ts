@@ -236,6 +236,39 @@ describe("AuthplaneAuthGuard", () => {
 		});
 	});
 
+	it("anchors the DPoP htu at protocol + host for a non-special scheme", async () => {
+		// WHATWG `URL.origin` is the literal "null" for a scheme outside its
+		// special set, while the indicator gate deliberately admits any scheme
+		// with a host — an origin-keyed anchor would have produced
+		// `null/mcp` and failed every DPoP-bound request.
+		const claims = buildClaims();
+		const verifier = {
+			verify: vi.fn(async () => claims),
+		} as unknown as AuthplaneResource;
+		const guard = buildGuard({
+			verifier,
+			options: {
+				issuer: "https://auth.example.com",
+				resource: "mcp://api.example.com/mcp",
+			},
+		});
+		const req = expressReq({
+			headers: {
+				host: "api.example.com",
+				authorization: "Bearer abc",
+				dpop: "proof-value",
+			},
+		});
+
+		await guard.canActivate(makeContext(req));
+
+		expect(verifier.verify).toHaveBeenCalledWith("abc", {
+			dpopRequest: expect.objectContaining({
+				url: "mcp://api.example.com/mcp",
+			}),
+		});
+	});
+
 	it("pins the DPoP htu to the configured resource — ignores Host / X-Forwarded-* spoofing", async () => {
 		const claims = buildClaims();
 		const verifier = {
