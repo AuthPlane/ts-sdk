@@ -10,6 +10,7 @@ import {
 import {
 	AuthplaneError,
 	type AuthplaneResource,
+	errorResponseBody,
 	httpStatus,
 	InsufficientScope,
 	wwwAuthenticate,
@@ -76,16 +77,11 @@ export class AuthplaneExceptionFilter implements ExceptionFilter {
 		}
 		const header = wwwAuthenticate(exception, wwwAuthenticateOptions);
 
-		const errorCode =
-			exception instanceof InsufficientScope
-				? "insufficient_scope"
-				: "invalid_token";
-
 		setHeader(reply, "WWW-Authenticate", header);
-		sendJson(reply, httpStatus(exception), {
-			error: errorCode,
-			error_description: exception.message,
-		});
+		// Body from the same core helper that built the header, so the two name
+		// one error code and neither hands the exception's own message to a
+		// caller who has not authenticated.
+		sendJson(reply, httpStatus(exception), errorResponseBody(exception));
 	}
 
 	/**
@@ -106,8 +102,9 @@ export class AuthplaneExceptionFilter implements ExceptionFilter {
 
 	/**
 	 * Best-effort PRM document URL for the `resource_metadata=` challenge
-	 * parameter. Falls back to omitting the parameter if the resource cannot
-	 * compute one — the challenge itself stays well-formed (RFC 9728 §5.1
+	 * parameter: the configured `resourceMetadataUrl` when the module sets one,
+	 * the URL derived from `resource` otherwise. Falls back to omitting the
+	 * parameter if the resource cannot compute one — the challenge itself stays well-formed (RFC 9728 §5.1
 	 * makes `resource_metadata` optional). The first failure is logged at
 	 * `warn` because it almost always means a misconfigured `resource` URL
 	 * and the operator would otherwise only discover it when a client fails
@@ -116,12 +113,12 @@ export class AuthplaneExceptionFilter implements ExceptionFilter {
 	 */
 	private safePrmUrl(): string | undefined {
 		try {
-			return this.resource.prmDocumentUrl();
+			return this.resource.resourceMetadataUrl();
 		} catch (err) {
 			if (!this.prmUrlWarned) {
 				this.prmUrlWarned = true;
 				this.logger.warn(
-					`prmDocumentUrl() threw — omitting resource_metadata from WWW-Authenticate. Check the configured 'resource' URL: ${err instanceof Error ? err.message : String(err)}`,
+					`resourceMetadataUrl() threw — omitting resource_metadata from WWW-Authenticate. Check the configured 'resource' URL: ${err instanceof Error ? err.message : String(err)}`,
 				);
 			}
 			return undefined;

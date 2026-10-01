@@ -11,6 +11,7 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	listDeclaringModules,
+	loadCatalogIds,
 	loadResultsFromJsonlFiles,
 	writeConformanceReport,
 } from "./report.js";
@@ -562,10 +563,10 @@ describe("listDeclaringModules", () => {
 		mkdirSync(resolve(path, ".."), { recursive: true });
 		// Built by concatenation, not by a template literal. Spelling the call
 		// out inline made *this file* match the declaration regex, so the scanner
-		// read `${id}` as a declared case id out of its own source. Inert only by
-		// accident today — listDeclaringModules drops it because it is not in the
-		// catalog, and catalogAlignment only checks catalog -> declared — but the
-		// reverse drift check is the natural next assertion and would turn red.
+		// read `${id}` as a declared case id out of its own source. This is now
+		// load-bearing rather than tidy: catalogAlignment asserts declared ->
+		// catalog as well, so an inline call would make this file declare
+		// `${id}`, which no catalog carries, and turn the alignment suite red.
 		const call = 'conformanceCase("';
 		writeFileSync(
 			path,
@@ -633,5 +634,34 @@ describe("listDeclaringModules", () => {
 			"conformance-tests/shared.test.ts",
 			"tests/core/shared.test.ts",
 		]);
+	});
+});
+
+describe("loadCatalogIds", () => {
+	// The guard this exercises shipped unreachable once, for the two shapes it
+	// names, and nothing in the suite noticed — which is why it lives in
+	// report.ts rather than as a module-private of the alignment test.
+	it("reads the ids of the resolved catalog", () => {
+		expect([...loadCatalogIds(fromDir)].sort()).toEqual(["case-a", "case-b"]);
+	});
+
+	it.each([
+		["an empty document", ""],
+		["a document with no cases key", 'catalog_version: "9"\n'],
+		["a cases key that is not a list", 'catalog_version: "9"\ncases: nope\n'],
+	])("reports a harness problem, not drift, for %s", (_label, text) => {
+		writeFileSync(resolve(dir, "catalog.yaml"), text, "utf-8");
+		expect(() => loadCatalogIds(fromDir)).toThrow(
+			/harness problem, not catalog drift/,
+		);
+	});
+
+	it("drops entries with no string id rather than emitting undefined", () => {
+		writeFileSync(
+			resolve(dir, "catalog.yaml"),
+			'catalog_version: "9"\ncases:\n  - id: "real-case"\n  - notes: "no id here"\n',
+			"utf-8",
+		);
+		expect([...loadCatalogIds(fromDir)]).toEqual(["real-case"]);
 	});
 });

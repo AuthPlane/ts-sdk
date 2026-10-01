@@ -109,6 +109,7 @@ AuthplaneModule.forRootAsync({
 |---|---|---|
 | `issuer` | `string` (required) | Authplane issuer URL (your `authserver`). |
 | `resource` | `string` (required) | Resource URI tokens must be audience-bound to (`aud` claim). |
+| `resourceMetadataUrl` | `string` (optional) | Absolute URL advertised as `resource_metadata=` on every challenge the exception filter emits, overriding the URL derived from `resource`. See [Where the PRM document lives](#where-the-prm-document-lives). |
 | `scopes` | `string[]` (optional) | All scopes this server supports. Used for PRM and, by default, as `requiredScopes`. |
 | `requiredScopes` | `string[]` (optional) | Module-level scopes enforced by the guard. Defaults to `scopes` when absent. Layers with per-route `@RequireScopes(...)`. |
 | `auth` | `AuthProvider \| ASCredentials` (optional) | AS-facing credentials for outbound calls. Accepts a full `AuthProvider` (e.g. `private_key_jwt`, mTLS, custom) or the `{ clientId, clientSecret }` shortcut (wrapped in `ClientCredentialsProvider` by core). Required when introspection/revocation is enabled. Mirrors `auth` on `AuthplaneClient.create`. |
@@ -257,6 +258,19 @@ class PrmController {
 }
 ```
 
+### Where the PRM document lives
+
+RFC 9728 does not say who has to host the metadata document, only what a client finds when it follows the `resource_metadata` parameter of a `WWW-Authenticate` challenge. Two topologies work.
+
+**(a) Resource-hosted — the default.** This server serves the document itself at the URL derived from `resource`, `/.well-known/oauth-protected-resource[/path]`, and every challenge points there. Nothing to configure. That is the controller described above.
+
+**(b) AS-hosted.** `authserver` >= 0.2.0 serves an RFC 9728 document for every registered Resource at `<issuer>/.well-known/oauth-protected-resource/{ref}`, where `{ref}` is the Resource URI's path suffix (RFC 9728 §3.1) or its slug. Set `resourceMetadataUrl` to that URL and this server stops advertising its own; it only points at the AS's. Use it when the resource server cannot host well-known paths — a platform that owns `/.well-known`, a proxy that strips it, a resource mounted under a path it does not control.
+
+Only the advertisement moves. The controller stays mounted at the derived path and keeps serving this server's own document, whose `resource` member still names this server's identifier. So the two documents can be served side by side during a migration, and switching back is a config change.
+
+Whichever hosts it, RFC 9728 §3.3 binds the document to this server: the `resource` value **inside** the document must equal the URL clients call, byte for byte, or a conformant client discards the document — and the resource server then looks unreachable rather than misconfigured. So the Resource URI registered at the authorization server, the `resource` configured here, and this server's public URL must be the same string; a trailing slash or an `http`/`https` difference is enough to break it.
+
+
 ## Introspection and revocation
 
 By default the adapter trusts signature + `exp`/`nbf`. To enable RFC 7662 introspection on every request (catches tokens revoked before expiry):
@@ -274,6 +288,14 @@ AuthplaneModule.forRoot({
 ```
 
 `IntrospectionRevocation` is a singleton class from `@authplane/sdk/core` — obtain its instance with `IntrospectionRevocation.get()` and pass it through `revocationChecker`. Internally it's detected via `instanceof`, which flips `AuthplaneResource` into "introspect on every verify" mode: the underlying resource calls `authserver`'s introspection endpoint on each `verify()` and raises on `active: false`. This adds one round-trip per request; use only if eager revocation matters to your threat model.
+
+The introspecting client must be **confidential** (it needs a `clientSecret`) **and** either the client that was issued the token or a runtime-client of the Resource named in the token's `aud`. Since authserver 0.1.2 every other caller — a public (secret-less) client included — receives `{"active": false}`, which the SDK reads as "revoked", so a resource server introspecting with the wrong credentials silently rejects every token. Register the resource server on its Resource with:
+
+```bash
+authserver admin resource runtime-client add --client-id <rs-client-id> --slug <resource-slug>
+```
+
+A public client cannot introspect at all.
 
 You can also pass a custom `RevocationChecker` — an async function `(claims, rawToken) => Promise<boolean>` — for database-backed revocation lists.
 
@@ -383,6 +405,8 @@ class ChattyAuthFilter extends AuthplaneExceptionFilter {
 >   throw err;
 > }
 > ```
+>
+> An `AccessDeniedError` (`access_denied`, 403) from the same exchange is not a consent problem: the operator has not allowlisted the exchanging client on the target Resource (`PATCH /admin/resources/{id}` with `{"policy": {"exchange": {"allowed_client_ids": ["<exchanging-client-id>"]}}}`), and re-prompting the user will not fix it; an `InvalidTargetError` (`invalid_target`, 400) means the `resource` string does not match a granted resource exactly.
 
 ## Express vs. Fastify
 

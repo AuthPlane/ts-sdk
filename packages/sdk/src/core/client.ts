@@ -40,6 +40,7 @@ export class AuthplaneClient {
 	private fetchSettings: FetchSettings = new FetchSettings();
 	private jwksRefreshSeconds = 300;
 	private metadataRefreshSeconds = 3600;
+	private fetchFailureBackoffSeconds: number | undefined;
 
 	private metadataCache: MetadataCache | undefined;
 	private jwksCache: JWKSCache | undefined;
@@ -69,6 +70,20 @@ export class AuthplaneClient {
 		fetchSettings?: FetchSettings | undefined;
 		jwksRefreshSeconds?: number | undefined;
 		metadataRefreshSeconds?: number | undefined;
+		/**
+		 * Minimum interval between metadata/JWKS fetch attempts after a failed
+		 * one (default `30`). While it holds, the last known good document keeps
+		 * being served — or the retained failure surfaces immediately when there
+		 * is none — instead of every caller re-paying the fetch timeout against
+		 * an unreachable AS. The effective floor per cache is
+		 * `max(1, min(this, refreshSeconds))`, so it never exceeds the cache's
+		 * own refresh interval and never collapses to zero — except that a cache
+		 * whose refresh interval is `0` ("re-read every time") opts out of the
+		 * floor entirely, and a non-finite value here falls back to the default.
+		 * One knob governs both documents for the same reason `fetchSettings`
+		 * does: they share the fetch path and the failure mode.
+		 */
+		fetchFailureBackoffSeconds?: number | undefined;
 		cacheTtlBufferSeconds?: number | undefined;
 		defaultTtlSeconds?: number | undefined;
 		/**
@@ -99,6 +114,7 @@ export class AuthplaneClient {
 
 		client.jwksRefreshSeconds = options.jwksRefreshSeconds ?? 300;
 		client.metadataRefreshSeconds = options.metadataRefreshSeconds ?? 3600;
+		client.fetchFailureBackoffSeconds = options.fetchFailureBackoffSeconds;
 
 		client.tokenCache = new TokenCache<TokenResponse>(
 			options.cacheTtlBufferSeconds ?? 30,
@@ -124,44 +140,43 @@ export class AuthplaneClient {
 				maxSize: 131_072,
 			},
 		);
-		const buildJwks = (jwksUri: string): JWKSCache => {
-			const jwksFetcher = new DocumentFetcher<JwksDocument>(jwksUri, {
-				settings: this.fetchSettings,
-				maxSize: 65_536,
-			});
-			return new JWKSCache(() => jwksFetcher.fetch(), this.jwksRefreshSeconds);
-		};
-
-		this.metadataCache = new MetadataCache(() => metadataFetcher.fetch(), {
+		const metadataCache = new MetadataCache(() => metadataFetcher.fetch(), {
 			refreshSeconds: this.metadataRefreshSeconds,
+			failureBackoffSeconds: this.fetchFailureBackoffSeconds,
 			expectedIssuer: this.issuer,
 			allowHttp: this.fetchSettings.allowHttp,
-			onChange: async (oldMetadata, newMetadata) => {
-				const newJwksUri = newMetadata.jwks_uri;
-				if (oldMetadata.jwks_uri === newJwksUri) return;
-				if (typeof newJwksUri !== "string" || newJwksUri.length === 0) return;
-
-				// Probe the candidate before swapping; on failure, keep the existing
-				// cache in place so verification stays available. The old cache may
-				// serve stale keys if the AS actually rotated signing material — that
-				// is a louder failure mode than silently leaving `jwksCache` undefined.
-				const candidate = buildJwks(newJwksUri);
-				try {
-					await candidate.get();
-				} catch (error) {
-					console.warn(
-						`[authplane] JWKS URI rotated to '${newJwksUri}' but initial fetch failed; continuing with existing JWKS cache: ${String(error)}`,
-					);
-					return;
-				}
-				const previous = this.jwksCache;
-				this.jwksCache = candidate;
-				await previous?.close().catch(() => {});
-			},
 		});
+		this.metadataCache = metadataCache;
 
-		const jwksUri = await this.metadataCache.getJwksUri();
-		this.jwksCache = buildJwks(jwksUri);
+		// The JWKS URI is resolved from the metadata cache on every JWKS fetch,
+		// rather than captured once and rebound when the document changes. That
+		// leaves no window in which the cache holds keys fetched from a URI the
+		// current metadata no longer names, and no second cache object to swap in:
+		// a rotation takes effect on the next JWKS fetch, whichever path reaches
+		// it first. `getJwksUri()` reads the validated document, so a metadata
+		// response that fails validation can never redirect key retrieval.
+		// Read the metadata document once here so a malformed or unreachable one
+		// fails `create()` as a metadata error, rather than reaching the operator
+		// wrapped in whatever the first JWKS fetch happened to raise.
+		await metadataCache.get();
+
+		const settings = this.fetchSettings;
+		this.jwksCache = new JWKSCache(
+			async (forceUpstream) => {
+				// A forced JWKS fetch means the caller already missed the `kid` it
+				// needed, so the cached metadata is not trustworthy about where keys
+				// live either — re-read it rather than resolving against a document
+				// that may name the withdrawn URI.
+				const jwksUri = await metadataCache.getJwksUri(forceUpstream);
+				const jwksFetcher = new DocumentFetcher<JwksDocument>(jwksUri, {
+					settings,
+					maxSize: 65_536,
+				});
+				return jwksFetcher.fetch();
+			},
+			this.jwksRefreshSeconds,
+			this.fetchFailureBackoffSeconds,
+		);
 		await this.jwksCache.get();
 	}
 

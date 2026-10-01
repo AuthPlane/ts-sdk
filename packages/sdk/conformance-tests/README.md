@@ -25,9 +25,16 @@ The catalog case ID lives on the test itself (in the `conformanceCase(...)` call
 
 ## Catalog Alignment (Meta-test)
 
-`catalogAlignment.test.ts` loads the shared OAuth SDK Conformance Catalog YAML (auto-discovered from the sibling [`AuthPlane/conformance`](https://github.com/AuthPlane/conformance) checkout at `../conformance/oauth-sdk-conformance-catalog.yaml`, or via the `CONFORMANCE_CATALOG_PATH` env override), extracts all `case-id`s, and verifies that every `case-id` appears in this package's conformance suite by scanning conformance test files for `conformanceCase("<id>", ...)`.
+`catalogAlignment.test.ts` loads the shared OAuth SDK Conformance Catalog YAML (auto-discovered from the sibling [`AuthPlane/conformance`](https://github.com/AuthPlane/conformance) checkout at `../conformance/oauth-sdk-conformance-catalog.yaml`, or via the `CONFORMANCE_CATALOG_PATH` env override), extracts all `case-id`s, and compares them against the declarations it finds by scanning collected test files for `conformanceCase("<id>", ...)`.
 
-If any catalog case is missing, the alignment test fails.
+The two must agree in **both** directions, and either mismatch fails the test:
+
+- every catalog case is declared somewhere — otherwise bumping the pin without adding coverage would merge green and publish a report full of silent `not_run` entries;
+- every declaration names a case the catalog carries — otherwise a typo, a renamed case or a case dropped from the pin leaves the marker claiming coverage that maps to nothing. The report ignores declarations it cannot match, so nothing else would go red: the run stays green while the catalog case it was meant to cover has no coverage at all.
+
+A failure lists every offending id with the direction it broke, so a typo shows up as both the case that lost its coverage and the misspelling that took it.
+
+The one sanctioned exception is `HARNESS_SELF_TEST_IDS`, which names — individually, not by prefix — the ids `tests/core/conformanceCaseCoverage.test.ts` declares to drive `conformanceCase`'s own `catch` path. Those describe the harness rather than a protocol requirement, so no catalog case will ever carry them. A companion test asserts each one is still declared and still absent from the catalog, so the exemption cannot outlive its reason.
 
 CI pins the catalog to a fixed revision, single-sourced in
 [`.conformance-catalog-ref`](../../../.conformance-catalog-ref) at the repo
@@ -90,7 +97,7 @@ The report is written only when the run actually covered a catalog case, so a un
 
 The alignment verdict is separate. "A missing case is treated as `not_run` and fails alignment" (catalog README), so `run.alignment_ok` is `false` when a complete run left cases `not_run`. It is **omitted** under `complete: false` — there the `not_run` cases are what the filter left out and say nothing about alignment, which is the distinction `complete` exists to draw. `run` is an additive extension, which the catalog explicitly permits; redefining a Field Contract field would not be.
 
-Note that `summary.skipped` is structurally always `0` here: this SDK has no path that emits `skipped` for a case, because nothing calls `conformanceCase` with a deferral. It is not that the SDK skips nothing by coincidence — the status is currently unreachable. go-sdk sets it from `t.Skipped()`.
+Note that `summary.skipped` is structurally always `0` here: this SDK has no path that emits `skipped` for a case, because nothing calls `conformanceCase` with a deferral. It is not that the SDK skips nothing by coincidence — the status is currently unreachable. A harness that can defer a case sets it from its runner's skip signal.
 
 ### Where a case may be declared
 
@@ -119,7 +126,7 @@ See [CONTRIBUTING.md](../../../CONTRIBUTING.md#local-verification) for the full 
 
 ## Test Files
 
-- `test_rfc8414_conformance.test.ts`: RFC 8414
+- `test_rfc8414_conformance.test.ts`: RFC 8414, plus the RFC 9728 / RFC 8707 resource-identifier and PRM-derivation cases (`sdk-resource-metadata`)
 - `test_oauth_protocol_conformance.test.ts`: RFC 6749, RFC 7009, RFC 7662, RFC 8693, RFC 8707
 - `test_jwt_and_dpop_conformance.test.ts`: RFC 9068, RFC 8725, RFC 9449, RFC 9728
 

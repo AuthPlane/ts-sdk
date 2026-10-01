@@ -315,9 +315,58 @@ export type RunFacts = {
 	generatedAt?: string;
 };
 
-/** Parse catalog YAML. For callers that hold the text rather than the document. */
+/**
+ * Parse catalog YAML into a document with a usable `cases` array.
+ *
+ * The shape check is here rather than at each call site because every caller
+ * needs it and none of them can do anything useful without it: an empty
+ * document parses to `null`, one without a `cases` key gives `undefined`, and a
+ * `cases:` that is a scalar or a mapping is not an array — all of which make
+ * `.map` throw a bare `TypeError` before whatever guard the caller wrote could
+ * name the real problem. Entries without a string `id` are dropped for the same
+ * reason: one would otherwise put `undefined` in an id set and surface as
+ * `catalog case "undefined" has no declaration`.
+ *
+ * Callers get an empty `cases` array on all of those, which is a state they
+ * already have to handle — the catalog legitimately having no cases is
+ * indistinguishable from a wrong file, and both are a harness fault, not drift.
+ */
 export function parseCatalog(catalogText: string): Catalog {
-	return yaml.parse(catalogText) as Catalog;
+	const doc = yaml.parse(catalogText) as Catalog | null | undefined;
+	const cases = Array.isArray(doc?.cases)
+		? doc.cases.filter((c): c is CatalogCase => typeof c?.id === "string")
+		: [];
+	return { ...(doc ?? {}), cases } as Catalog;
+}
+
+/**
+ * The case ids in the catalog resolved from `fromDir`.
+ *
+ * Lives here rather than in the alignment test so it is reachable from a test
+ * of its own: as a module-private function of a test file, whose input is
+ * process env plus the filesystem, its empty-catalog guard could not be
+ * exercised — and that guard shipped unreachable once already, for the two
+ * shapes it names, with nothing in the suite noticing.
+ *
+ * Throws rather than returning empty: a catalog that parsed to nothing passes
+ * the coverage direction vacuously and reports every declaration as an orphan,
+ * which is drift-shaped output from a harness fault. The drift workflow reads a
+ * red alignment step as "the catalog has cases the SDK does not cover", so this
+ * has to say which it is.
+ */
+export function loadCatalogIds(fromDir: string): Set<string> {
+	const catalogPath = resolveCatalogPath(fromDir);
+	const ids = new Set(
+		parseCatalog(readFileSync(catalogPath, "utf-8")).cases.map((c) => c.id),
+	);
+	if (ids.size === 0) {
+		throw new Error(
+			`The resolved conformance catalog (${catalogPath}) contains no cases. ` +
+				"It failed to parse, or the wrong file was resolved — this is a " +
+				"harness problem, not catalog drift.",
+		);
+	}
+	return ids;
 }
 
 /**
@@ -432,9 +481,9 @@ export function buildReportPayload(
 	return {
 		catalog_id: doc.catalog_id ?? "oauth-sdk-conformance-catalog",
 		catalog_version: doc.catalog_version ?? "",
-		// The catalog's usage_guidance asks for an execution timestamp, and
-		// go-sdk emits generated_at. Without it a stale report is indistinguishable
-		// from a fresh one — which matters now that generation can be skipped.
+		// The catalog's usage_guidance asks for an execution timestamp. Without
+		// it a stale report is indistinguishable from a fresh one — which
+		// matters now that generation can be skipped.
 		...(facts.generatedAt ? { generated_at: facts.generatedAt } : {}),
 		...(Object.keys(run).length > 0 ? { run } : {}),
 		implementation: {
@@ -445,10 +494,9 @@ export function buildReportPayload(
 		// "Non-zero on any failure" (conformance README, runner.exit_status). A
 		// count of failed *cases* misses a module that never got to report one —
 		// an import-time throw failed twelve cases into not_run and still wrote
-		// exit_status 0. go-sdk threads the real runner status through; this now
-		// does the same, falling back to the case count when the caller has no
-		// runner state to give (buildReportPayload is also called directly by
-		// tests).
+		// exit_status 0. The real runner status is threaded through instead,
+		// falling back to the case count when the caller has no runner state to
+		// give (buildReportPayload is also called directly by tests).
 		runner: {
 			tool: "vitest",
 			// The runner's status, and only that. An earlier revision folded "a
@@ -522,6 +570,8 @@ export function writeConformanceReport(
 	// text from the string, so a catalog of this size was walked twice per run
 	// for one list of ids.
 	const catalog = parseCatalog(catalogText);
+	// `parseCatalog` guarantees an array of entries with string ids, so this
+	// cannot throw out of the vitest teardown on a wrong-file resolution.
 	const catalogIds = new Set(catalog.cases.map((c) => c.id));
 	// "Did this run cover the catalog", not "did it record anything". Those
 	// differ: tests/core/conformanceCaseCoverage.test.ts records ids that are

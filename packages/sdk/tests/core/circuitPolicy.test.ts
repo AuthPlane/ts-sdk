@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { shouldTripCircuit } from "../../src/core/circuitPolicy.js";
 import {
+	AccessDeniedError,
 	AuthError,
 	InvalidClientError,
 	InvalidGrantError,
 	InvalidRequestError,
+	InvalidTargetError,
 	ProtocolError,
 	ServerError,
 	UnauthorizedClientError,
@@ -48,6 +50,26 @@ describe("shouldTripCircuit", () => {
 			shouldTripCircuit(
 				new AuthError("consent", { code: "consent_required", statusCode: 400 }),
 			),
+		).toBe(false);
+	});
+
+	it("does not trip on access_denied (403) or invalid_target (400)", () => {
+		// Both are policy answers from a healthy AS (exchanging client not
+		// allowlisted on the target Resource; `resource` not matching a granted
+		// resource byte for byte), never an outage — listed explicitly so the
+		// exclusion does not depend on the generic 4xx fallthrough.
+		expect(shouldTripCircuit(new AccessDeniedError("not allowed", 403))).toBe(
+			false,
+		);
+		expect(shouldTripCircuit(new InvalidTargetError("no match", 400))).toBe(
+			false,
+		);
+		// The code alone is enough, independent of the status the AS attached.
+		expect(
+			shouldTripCircuit(new AuthError("denied", { code: "access_denied" })),
+		).toBe(false);
+		expect(
+			shouldTripCircuit(new AuthError("target", { code: "invalid_target" })),
 		).toBe(false);
 	});
 

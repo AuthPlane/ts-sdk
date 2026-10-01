@@ -31,6 +31,7 @@ Tokens must carry the scope for the specific tool being called. A token with onl
    ```
 
    `AUTHPLANE_RESOURCE` is used both as the JWT `aud` claim and as the `client_id` for token introspection.
+   That client must be confidential (it has `AUTHPLANE_CLIENT_SECRET`) and either the issuing client or a runtime-client of the resource — since authserver 0.1.2 any other caller gets `{"active": false}` and every token is rejected as revoked. The demo provisioner registers it; on your own setup run `authserver admin resource runtime-client add --client-id <client-id> --slug <resource-slug>`.
    Legacy env names (`RESOURCE_URL`, `ISSUER_URL`, `CLIENT_SECRET`) are still accepted for compatibility.
 
 2. Run the MCP server:
@@ -75,5 +76,7 @@ MCP Client ──Bearer JWT──► mcpserver.ts (port 8080)
 **`requireScope(scope, authInfo)`** — call at the top of any tool handler to enforce per-tool scope. If the token is missing the scope the tool returns an error result to the MCP client.
 
 **`IntrospectionRevocation`** — enables RFC 7662 token introspection on every `verify()` call using the adapter-supplied `asCredentials`. When `active: false` is returned, `TokenRevoked` is thrown (mapped to MCP's `InvalidTokenError`).
+
+**`debug_exchange_token`** — a same-resource exchange (subject token and `resource` both belong to this server). authserver 0.2.0 answers `access_denied` (403) unless the demo client is in the resource's `runtime.client_ids` (or its `policy.exchange.allowed_client_ids`); that is an operator allowlist, not a consent prompt, so re-running the tool with a fresh user token does not clear it.
 
 **`consent_demo`** — exchanges the inbound user token for a Google Calendar token via RFC 8693. The demo authserver registers `google-calendar` as a Broker resource with fake upstream credentials, so the AS consistently returns `consent_required` + a `consent_url`; the adapter's wrapped `client.exchange()` translates that into MCP `-32042` automatically — no `try/catch` in the tool handler.

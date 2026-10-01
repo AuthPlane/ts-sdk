@@ -92,12 +92,21 @@ export function maybeRethrowConformanceError(
  *
  * - `catalogAlignment.test.ts` extracts IDs statically from call sites.
  * - This helper also records runtime pass/fail info for report generation.
+ *
+ * `timeoutMs` is forwarded to `it`. A case that waits out a real refresh
+ * interval needs one: nothing in this package overrides Vitest's 5 s default,
+ * and an overrun does not degrade to a skip. It does not reach the `catch`
+ * below either — Vitest stops awaiting `fn`, so no record is appended at all.
+ * The run's exit status goes non-zero while the case reads `not_run`, or keeps
+ * whatever a second declaring module recorded, so the case table can still
+ * show it green. Left unset, `it`'s own default stands.
  */
 export function conformanceCase(
 	id: string,
 	testName: string,
 	fn: () => unknown | Promise<unknown>,
 	coverage: ConformanceCoverage = {},
+	timeoutMs?: number,
 ): void {
 	const resolvedCoverage = {
 		level: coverage.level ?? "full",
@@ -105,36 +114,40 @@ export function conformanceCase(
 		note: coverage.note ?? "",
 	};
 
-	it(testName, async () => {
-		try {
-			await fn();
-			const resolved = {
-				caseId: id,
-				testName,
-				status: "passed",
-				coverage: resolvedCoverage,
-			} satisfies ConformanceResult;
-			appendResultRecord({ ...resolved, writtenAt: Date.now() });
-		} catch (err) {
-			const e = normalizeConformanceError(err);
-			const resolved = {
-				caseId: id,
-				testName,
-				status: "failed",
-				coverage: resolvedCoverage,
-				failure: {
-					message: e.message,
-					// exactOptionalPropertyTypes: `stack?: string` means absent, not
-					// `undefined`. Error.stack is optional, so omit it when missing —
-					// which is also what JSON.stringify does to the record downstream.
-					...(e.stack === undefined ? {} : { stack: e.stack }),
-				},
-			} satisfies ConformanceResult;
-			appendResultRecord({ ...resolved, writtenAt: Date.now() });
-			maybeRethrowConformanceError(
-				err,
-				globalThis.__AUTHPLANE_CONFORMANCE_RETHROW_ERRORS__ !== false,
-			);
-		}
-	});
+	it(
+		testName,
+		async () => {
+			try {
+				await fn();
+				const resolved = {
+					caseId: id,
+					testName,
+					status: "passed",
+					coverage: resolvedCoverage,
+				} satisfies ConformanceResult;
+				appendResultRecord({ ...resolved, writtenAt: Date.now() });
+			} catch (err) {
+				const e = normalizeConformanceError(err);
+				const resolved = {
+					caseId: id,
+					testName,
+					status: "failed",
+					coverage: resolvedCoverage,
+					failure: {
+						message: e.message,
+						// exactOptionalPropertyTypes: `stack?: string` means absent, not
+						// `undefined`. Error.stack is optional, so omit it when missing —
+						// which is also what JSON.stringify does to the record downstream.
+						...(e.stack === undefined ? {} : { stack: e.stack }),
+					},
+				} satisfies ConformanceResult;
+				appendResultRecord({ ...resolved, writtenAt: Date.now() });
+				maybeRethrowConformanceError(
+					err,
+					globalThis.__AUTHPLANE_CONFORMANCE_RETHROW_ERRORS__ !== false,
+				);
+			}
+		},
+		timeoutMs,
+	);
 }

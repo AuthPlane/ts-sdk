@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
 import {
+  AccessDeniedError,
   DPoPKeyMaterial,
   DPoPProvider,
   FetchSettings,
   GRANT_TYPE_TOKEN_EXCHANGE,
+  InvalidTargetError,
   TOKEN_TYPE_ACCESS_TOKEN,
   clientCredentialsGrant,
   exchange,
@@ -20,6 +22,8 @@ describe("index exports", () => {
     expect(typeof revokeToken).toBe("function");
     expect(typeof DPoPProvider).toBe("function");
     expect(typeof DPoPKeyMaterial).toBe("function");
+    expect(typeof AccessDeniedError).toBe("function");
+    expect(typeof InvalidTargetError).toBe("function");
     expect(GRANT_TYPE_TOKEN_EXCHANGE).toBe(
       "urn:ietf:params:oauth:grant-type:token-exchange",
     );

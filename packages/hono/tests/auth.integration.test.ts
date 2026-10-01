@@ -103,6 +103,7 @@ describe("authplaneHonoAuth integration", () => {
 			verify,
 			prmResponse: vi.fn(() => prm),
 			prmDocumentUrl: vi.fn(() => prmDocumentUrl),
+			resourceMetadataUrl: vi.fn(() => prmDocumentUrl),
 		} as unknown as AuthplaneResource;
 
 		const client = {

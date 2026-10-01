@@ -12,6 +12,7 @@ export {
 	sha256Base64Url,
 } from "./dpop.js";
 export {
+	AccessDeniedError,
 	AuthError,
 	ConsentRequiredError,
 	DPoPNonceRequiredError,
@@ -19,6 +20,7 @@ export {
 	InvalidGrantError,
 	InvalidRequestError,
 	InvalidScopeError,
+	InvalidTargetError,
 	mapOAuthError,
 	ProtocolError,
 	ServerError,

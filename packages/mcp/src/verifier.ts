@@ -2,9 +2,9 @@ import {
 	AuthplaneError,
 	type AuthplaneResource,
 	type DPoPRequestContext,
+	errorResponseBody,
 	httpStatus,
 	InvalidClaims,
-	sanitiseHeaderValue,
 } from "@authplane/sdk/core";
 // Imported for their *runtime* identity, not just their shape: the SDK's
 // `requireBearerAuth` classifies failures with `instanceof` against these
@@ -38,15 +38,18 @@ import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
  * `MetadataFetchError`) land on `ServerError`/500 — the closest faithful
  * mapping through this seam.
  *
- * The 401/403 messages are core's, run through `sanitiseHeaderValue`: the
- * SDK's header builder splices `error.message` into the quoted-string
- * `error_description="…"` unsanitised, and core messages can carry quotes
- * (jose's `"exp" claim timestamp check failed`) that would truncate the
- * `resource_metadata` hint clients need to start discovery. The 500 message
- * is a fixed generic string instead — the SDK renders `ServerError.message`
- * verbatim in the unauthenticated response body, and core's 5xx messages can
+ * Every message handed to the MCP SDK is a fixed sentence, never core's own.
+ * The host splices `error.message` straight into `error_description="…"`, so
+ * whatever is put here reaches a caller who has not authenticated: core's
+ * messages name the unknown `kid`, the claim that did not validate, the `typ`
+ * that was rejected, and an `aud` mismatch would hand over the exact audience
+ * the resource expects. The 401/403 sentences come from core's per-error-code
+ * table — the same text this SDK's own challenge builder emits, so the two
+ * hosts answer alike — and the 500 is generic because core's 5xx messages can
  * embed infrastructure detail (fetch failures name the host they couldn't
- * reach). The original error stays on `.cause` either way.
+ * reach). Sanitising is no longer part of it: the fixed sentences carry no
+ * quotes to truncate the `resource_metadata` hint with. The original error
+ * stays on `.cause` either way, for the host to log.
  *
  * Non-`AuthplaneError` values pass through untouched: the SDK already turns
  * anything unrecognised into a 500, and keeping the original preserves the
@@ -58,12 +61,16 @@ function toMcpAuthError(error: unknown): unknown {
 	}
 
 	const status = httpStatus(error);
-	const message = sanitiseHeaderValue(error.message);
+	// Bearer: this seam answers every failure as Bearer (see the class doc), so
+	// the description is the one a Bearer challenge would carry.
+	const { error_description: description } = errorResponseBody(error, {
+		scheme: "Bearer",
+	});
 	const mapped =
 		status === 403
-			? new InsufficientScopeError(message)
+			? new InsufficientScopeError(description)
 			: status === 401
-				? new InvalidTokenError(message)
+				? new InvalidTokenError(description)
 				: new ServerError("Authorization server temporarily unavailable");
 
 	// The wire response only carries the sanitised (or generic) message; the

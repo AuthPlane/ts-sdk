@@ -51,12 +51,12 @@ describe("authplaneOnError", () => {
 
 		expect(res.status).toBe(403);
 		expect(res.headers.get("WWW-Authenticate")).toBe(
-			'Bearer error="insufficient_scope", error_description="Token missing required scope \'tools/add\'. Token has scopes: tools/echo", scope="tools/add"',
+			'Bearer error="insufficient_scope", error_description="The access token does not carry the scope this operation requires", scope="tools/add"',
 		);
 		await expect(res.json()).resolves.toEqual({
 			error: "insufficient_scope",
 			error_description:
-				"Token missing required scope 'tools/add'. Token has scopes: tools/echo",
+				"The access token does not carry the scope this operation requires",
 		});
 	});
 
@@ -71,7 +71,7 @@ describe("authplaneOnError", () => {
 
 		expect(res.status).toBe(403);
 		expect(res.headers.get("WWW-Authenticate")).toBe(
-			'Bearer error="insufficient_scope", error_description="Insufficient scope", scope="tools/read"',
+			'Bearer error="insufficient_scope", error_description="The access token does not carry the scope this operation requires", scope="tools/read"',
 		);
 	});
 
@@ -106,7 +106,7 @@ describe("authplaneOnError", () => {
 
 		expect(res.status).toBe(401);
 		expect(res.headers.get("WWW-Authenticate")).toBe(
-			'Bearer error="invalid_token", error_description="Token has expired", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"',
+			'Bearer error="invalid_token", error_description="The access token is missing or not valid for this resource", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"',
 		);
 	});
 
@@ -238,7 +238,7 @@ describe("authplaneOnError", () => {
 
 		expect(res.status).toBe(401);
 		expect(res.headers.get("WWW-Authenticate")).toBe(
-			'Bearer error="invalid_token", error_description="Token has expired"',
+			'Bearer error="invalid_token", error_description="The access token is missing or not valid for this resource"',
 		);
 	});
 });

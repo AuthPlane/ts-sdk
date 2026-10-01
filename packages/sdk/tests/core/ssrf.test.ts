@@ -74,6 +74,45 @@ describe("buildMetadataUrl", () => {
     );
   });
 
+  // Routing this function through the shared issuer gate widened what it
+  // rejects. Both additions are reachable here: the derivation sets `pathname`
+  // on the parsed URL and returns it, so a host-less issuer used to yield a
+  // string no client could fetch, and a credential-bearing one was carried
+  // verbatim into the fetch target.
+  it("rejects an issuer that is not an absolute URL with a scheme and a host", () => {
+    for (const issuer of ["/auth", "", "https:auth.example.com"]) {
+      expect(() => buildMetadataUrl(issuer)).toThrow(
+        /must be an absolute URL with a scheme and a host/
+      );
+    }
+  });
+
+  it("rejects an issuer carrying whitespace or a control character", () => {
+    // A trailing newline from an environment variable is the realistic
+    // trigger: `new URL` trims it, so every check that reads the parse passed
+    // and the derivation below produced the cleaned location while the raw
+    // string stayed the expected `iss`. `"not a url"` moved here from the
+    // absoluteness case above — its space is now the first defect reported.
+    for (const issuer of [
+      "https://auth.example.com\n",
+      "https://auth.exa\tmple.com",
+      "not a url",
+    ]) {
+      expect(() => buildMetadataUrl(issuer)).toThrow(
+        /must not contain whitespace or control characters/
+      );
+    }
+  });
+
+  it("rejects an issuer carrying a userinfo component, without echoing it", () => {
+    expect(() =>
+      buildMetadataUrl("https://svc:s3cr3t@auth.example.com")
+    ).toThrow(/must not include a userinfo component/);
+    expect(() =>
+      buildMetadataUrl("https://svc:s3cr3t@auth.example.com")
+    ).not.toThrow(/s3cr3t/);
+  });
+
   it("does not leak the rejected query value into the error message", () => {
     expect(() =>
       buildMetadataUrl("https://auth.example.com/t?token=secret")
@@ -84,16 +123,28 @@ describe("buildMetadataUrl", () => {
   });
 });
 
-describe("AuthplaneClient.create rejects a query-bearing issuer", () => {
+describe("AuthplaneClient.create rejects a malformed issuer", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("rejects before any network fetch", async () => {
+  it("rejects a query-bearing issuer before any network fetch", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     await expect(
       AuthplaneClient.create({ issuer: "https://auth.example.com/t?x=1" })
     ).rejects.toThrow(TypeError);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects an issuer carrying whitespace before any network fetch", async () => {
+    // The released boundary the whitespace axis newly rejects: a trailing
+    // newline used to construct a client whose expected `iss` carried the byte
+    // while every fetch went to the cleaned location, so every token failed an
+    // identity comparison that looks identical in a log.
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await expect(
+      AuthplaneClient.create({ issuer: "https://auth.example.com\n" })
+    ).rejects.toThrow(/must not contain whitespace or control characters/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

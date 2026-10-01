@@ -152,6 +152,47 @@ describe("AuthplaneClient more branches", () => {
     }
   });
 
+  // RFC 8707 §2 / RFC 9728 §1.2: a fragment-bearing resource indicator is
+  // rejected where the operator configures it, not later from
+  // `prmDocumentUrl()` on the 401 challenge path. `client.resource()` has no
+  // check of its own — it inherits `AuthplaneResource`'s constructor gate, and
+  // this pins that the factory really does surface it.
+  it("rejects a fragment-bearing resource from client.resource()", async () => {
+    const serverData = await startFullServer({
+      tokenHandler: async () => ({
+        statusCode: 200,
+        json: { access_token: "at", token_type: "Bearer", expires_in: 10, scope: "" },
+      }),
+    });
+
+    const { server, base } = serverData;
+    try {
+      const client = await AuthplaneClient.create({
+        issuer: base,
+        devMode: true,
+        metadataRefreshSeconds: 60,
+        jwksRefreshSeconds: 60,
+      });
+
+      expect(() =>
+        client.resource({ resource: `${base}/mcp#frag`, scopes: [] }),
+      ).toThrow(TypeError);
+      expect(() =>
+        client.resource({ resource: `${base}/mcp#frag`, scopes: [] }),
+      ).toThrow(/RFC 8707 §2/u);
+
+      // The same identifier without the fragment is unaffected.
+      const ok = client.resource({ resource: `${base}/mcp`, scopes: [] });
+      expect(ok.prmResponse().resource).toBe(`${base}/mcp`);
+      await ok.close();
+      await client.close();
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+
   it("throws 'client not initialized' when metadataCache is missing (all entrypoints)", async () => {
     const serverData = await startFullServer({
       tokenHandler: async () => ({

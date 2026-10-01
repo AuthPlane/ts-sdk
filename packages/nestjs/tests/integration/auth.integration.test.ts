@@ -14,7 +14,8 @@ import {
 import { Test } from "@nestjs/testing";
 import {
 	AuthplaneClient,
-	type AuthplaneResource,
+	AuthplaneResource,
+	type AuthplaneResourceOptions,
 	InvalidSignature,
 	TokenExpired,
 	VerifiedClaims,
@@ -75,6 +76,47 @@ class MathController {
 })
 class TestAppModule {}
 
+@Controller("tenant-mcp")
+@UseGuards(AuthplaneAuthGuard)
+class QueryMathController {
+	@Post("add")
+	public add(): { readonly ok: boolean } {
+		return { ok: true };
+	}
+}
+
+@Module({
+	imports: [
+		AuthplaneModule.forRoot({
+			issuer: "https://auth.example.com",
+			resource: "https://api.example.com/mcp?tenant=a",
+			scopes: ["tools/add"],
+		}),
+	],
+	controllers: [QueryMathController],
+})
+class QueryResourceAppModule {}
+
+/**
+ * A client whose `resource()` calls through to the real core constructor, so
+ * the PRM document URL below is genuinely derived rather than stubbed. The
+ * client-owned collaborators are stubbed because nothing on the exercised
+ * paths (route registration, unauthenticated 401) dereferences them.
+ */
+function realResourceClient() {
+	return {
+		resource: (options: AuthplaneResourceOptions) =>
+			new AuthplaneResource({
+				...options,
+				issuer: "https://auth.example.com",
+				metadataCache: {},
+				fetchSettings: {},
+				getJwksCache: () => ({}),
+			} as unknown as ConstructorParameters<typeof AuthplaneResource>[0]),
+		close: vi.fn(async () => undefined),
+	};
+}
+
 function mockResource(): AuthplaneResource {
 	return {
 		verify: vi.fn(),
@@ -85,6 +127,10 @@ function mockResource(): AuthplaneResource {
 			bearer_methods_supported: ["header"],
 		})),
 		prmDocumentUrl: vi.fn(
+			() =>
+				"https://api.example.com/.well-known/oauth-protected-resource/mcp",
+		),
+		resourceMetadataUrl: vi.fn(
 			() =>
 				"https://api.example.com/.well-known/oauth-protected-resource/mcp",
 		),
@@ -271,3 +317,49 @@ describe.each(platforms)(
 		});
 	},
 );
+
+describe("AuthplaneModule — query-bearing resource (RFC 9728 §3)", () => {
+	let app: INestApplication;
+
+	beforeAll(async () => {
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(
+			realResourceClient() as unknown as AuthplaneClient,
+		);
+		const moduleRef = await Test.createTestingModule({
+			imports: [QueryResourceAppModule],
+		}).compile();
+		app = moduleRef.createNestApplication();
+		app.useGlobalFilters(app.get(AuthplaneExceptionFilter));
+		await app.init();
+	});
+
+	afterAll(async () => {
+		await app.close();
+		vi.restoreAllMocks();
+	});
+
+	it("registers the PRM route at the query-less well-known path", async () => {
+		// Route registration is path-keyed: the derived mount path sheds the
+		// query, and the served document still carries the full identifier in
+		// its `resource` member.
+		const response = await supertest(app.getHttpServer()).get(
+			"/.well-known/oauth-protected-resource/mcp",
+		);
+		expect(response.status).toBe(200);
+		expect(response.body.resource).toBe("https://api.example.com/mcp?tenant=a");
+	});
+
+	it("advertises the query-bearing document URL in the 401 challenge", async () => {
+		// End-to-end through the real core derivation (`realResourceClient`):
+		// the `resource_metadata` value must carry the query verbatim — that
+		// URL is the one a client round-trips against the served document's
+		// `resource` member (RFC 9728 §3.3).
+		const response = await supertest(app.getHttpServer())
+			.post("/tenant-mcp/add")
+			.send({});
+		expect(response.status).toBe(401);
+		expect(response.headers["www-authenticate"]).toContain(
+			'resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp?tenant=a"',
+		);
+	});
+});

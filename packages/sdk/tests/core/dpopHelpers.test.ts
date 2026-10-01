@@ -16,6 +16,7 @@ import {
   DPoPReplayDetected,
   InvalidDPoPProof,
   MultipleDPoPProofs,
+  wwwAuthenticate,
 } from "../../src/core/errors.js";
 
 function sha256Base64Url(value: string): string {
@@ -391,5 +392,60 @@ describe("dpop helpers", () => {
     vi.useRealTimers();
   });
 
-});
+  // RFC 9449 §9: the resource-server nonce proves the proof was minted after
+  // contacting the server. A caller who can read the expected nonce out of the
+  // 401 skips that round trip, so the assertion is on the COMPOSED challenge —
+  // the value that actually reaches the wire — not on the thrown error.
+  it("does not disclose the expected nonce in the WWW-Authenticate challenge", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-13T00:00:00Z"));
 
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const { privateKey, publicKey } = await generateKeyPair("ES256");
+    const publicJwk = await exportJWK(publicKey);
+    const expectedJkt = await calculateJwkThumbprint(publicJwk);
+
+    const method = "GET";
+    const url = "https://api.example.com/resource";
+    const accessToken = "at_1";
+
+    const proof = await new SignJWT({
+      htm: method,
+      htu: url,
+      iat: nowSeconds,
+      exp: nowSeconds + 120,
+      jti: "jti_nonce_1",
+      ath: sha256Base64Url(accessToken),
+      nonce: "client-stale-nonce",
+    } as Record<string, unknown>)
+      .setProtectedHeader({ alg: "ES256", typ: "dpop+jwt", jwk: publicJwk })
+      .sign(privateKey);
+
+    const error = await verifyDpopProof({
+      proof,
+      method,
+      url,
+      accessToken,
+      expectedJkt: String(expectedJkt),
+      maxAgeSeconds: 60,
+      clockSkewSeconds: 0,
+      expectedNonce: "server-nonce-abc",
+      replayStore: new InMemoryDPoPReplayStore(),
+    }).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(InvalidDPoPProof);
+    const challenge = wwwAuthenticate(error as InvalidDPoPProof);
+    expect(challenge).not.toContain("server-nonce-abc");
+    expect(challenge).toContain('error="invalid_token"');
+    // The fixed description would hide the nonce on its own; assert the
+    // message itself is clean, so the escape hatch cannot reopen the leak.
+    expect(
+      wwwAuthenticate(error as InvalidDPoPProof, { verboseDescription: true }),
+    ).not.toContain("server-nonce-abc");
+
+    vi.useRealTimers();
+  });
+});

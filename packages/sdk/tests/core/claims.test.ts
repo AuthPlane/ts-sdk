@@ -37,10 +37,39 @@ describe("VerifiedClaims", () => {
     expect(() => claims.requireScope("tools/admin")).toThrow(InsufficientScope);
   });
 
+  it("carries the required scopes on the thrown error", () => {
+    const claims = makeClaims();
+    // wwwAuthenticate() falls back to this for `scope="…"`, so a host with no
+    // configured scopes of its own still tells the client what to step up to.
+    try {
+      claims.requireScope("tools/admin");
+      expect.unreachable("requireScope must throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(InsufficientScope);
+      expect((error as InsufficientScope).requiredScopes).toEqual([
+        "tools/admin",
+      ]);
+    }
+  });
+
   describe("requireScopes (AND)", () => {
     it("is a no-op when the required list is empty", () => {
       const claims = makeClaims();
       expect(() => claims.requireScopes([])).not.toThrow();
+    });
+
+    it("carries the full required set on the thrown error, not just the missing ones", () => {
+      const claims = makeClaims();
+      try {
+        claims.requireScopes(["tools/query", "tools/admin"]);
+        expect.unreachable("requireScopes must throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(InsufficientScope);
+        expect((error as InsufficientScope).requiredScopes).toEqual([
+          "tools/query",
+          "tools/admin",
+        ]);
+      }
     });
 
     it("passes when every required scope is present", () => {

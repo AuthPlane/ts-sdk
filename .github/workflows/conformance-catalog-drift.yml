@@ -1,9 +1,11 @@
 name: Conformance Catalog Drift
 
-# Weekly early-warning check: does the LATEST conformance catalog (the default
-# branch of AuthPlane/conformance, unpinned) contain cases the SDK does not yet
-# cover? This runs the catalog-alignment meta-test against the tip of the
-# catalog instead of the SHA pinned in `.conformance-catalog-ref`.
+# Weekly early-warning check: has the LATEST conformance catalog (the default
+# branch of AuthPlane/conformance, unpinned) moved away from what the SDK
+# covers — either by carrying a case the SDK does not yet cover, or by renaming
+# or dropping one the SDK still declares? This runs the catalog-alignment
+# meta-test, which asserts both directions, against the tip of the catalog
+# instead of the SHA pinned in `.conformance-catalog-ref`.
 #
 # It never blocks PR CI — this workflow has no `pull_request` trigger, so it
 # cannot gate a PR. On drift the alignment step FAILS, turning the scheduled run
@@ -91,15 +93,19 @@ jobs:
               } >> "$GITHUB_STEP_SUMMARY"
               ;;
             failure)
-              echo "::warning::Conformance catalog drift — the latest catalog (default branch of AuthPlane/conformance) has cases the SDK does not yet cover. Add the missing conformanceCase(...) coverage, then bump .conformance-catalog-ref to the new SHA."
+              echo "::warning::Conformance catalog drift — the latest catalog (default branch of AuthPlane/conformance) no longer agrees with the SDK's conformanceCase(...) declarations. Read the failure for the direction and the case ids, then bump .conformance-catalog-ref to the new SHA."
               {
                 echo "### Conformance catalog: drift detected ⚠️"
                 echo ""
-                echo "The latest catalog (default branch) contains cases not yet covered by the SDK conformance suite."
+                echo "The latest catalog (default branch) and the SDK's declarations disagree. The alignment test asserts both directions, so this is one of:"
+                echo ""
+                echo "- the catalog carries a case the SDK does not cover — the usual case, a new case upstream;"
+                echo "- the SDK declares a case id the catalog no longer carries — a case renamed or dropped upstream;"
+                echo "- or the harness could not read a usable catalog at all — a truncated clone, a wrong \`CONFORMANCE_CATALOG_PATH\`. The failure text says so in as many words (\"this is a harness problem, not catalog drift\"), and nothing below applies until it is fixed."
                 echo ""
                 echo "**Next steps:**"
-                echo "1. Inspect the alignment-test failure in the job log above for the missing case ids."
-                echo "2. Add the corresponding \`conformanceCase(...)\` coverage under \`packages/sdk/\`."
+                echo "1. Inspect the alignment-test failure in the job log above — each line names the case id and which direction it broke."
+                echo "2. Add the missing \`conformanceCase(...)\` coverage under \`packages/sdk/\`, or update the declarations whose ids the catalog dropped."
                 echo "3. Bump \`.conformance-catalog-ref\` to the new catalog SHA so CI pins the adopted cases."
               } >> "$GITHUB_STEP_SUMMARY"
               ;;

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AuthplaneClient,
-  type AuthplaneResource,
+  AuthplaneResource,
+  type AuthplaneResourceOptions,
   ConsentRequiredError,
   DPoPReplayDetected,
   InsufficientScope,
@@ -84,6 +85,9 @@ describe("authplaneFastMcpAuth", () => {
       prmDocumentUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
+      resourceMetadataUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
     } as unknown as AuthplaneResource;
 
     const mockClient = {
@@ -146,6 +150,9 @@ describe("authplaneFastMcpAuth", () => {
       prmDocumentUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
+      resourceMetadataUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
     } as unknown as AuthplaneResource;
 
     const mockClient = {
@@ -183,6 +190,9 @@ describe("authplaneFastMcpAuth", () => {
         bearer_methods_supported: ["header"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;
@@ -233,6 +243,9 @@ describe("authplaneFastMcpAuth", () => {
         resource_signing_alg_values_supported: ["RS256", "ES256"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;
@@ -292,6 +305,9 @@ describe("authplaneFastMcpAuth", () => {
       prmDocumentUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
+      resourceMetadataUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
     } as unknown as AuthplaneResource;
 
     const mockClient = {
@@ -336,6 +352,9 @@ describe("authplaneFastMcpAuth", () => {
       prmDocumentUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
+      resourceMetadataUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
     } as unknown as AuthplaneResource;
 
     const mockClient = {
@@ -370,6 +389,9 @@ describe("authplaneFastMcpAuth", () => {
         resource_signing_alg_values_supported: ["RS256", "ES256"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;
@@ -417,6 +439,9 @@ describe("authplaneFastMcpAuth", () => {
         bearer_methods_supported: ["header"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;
@@ -473,6 +498,9 @@ describe("authplaneFastMcpAuth", () => {
         bearer_methods_supported: ["header"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;
@@ -539,6 +567,9 @@ describe("authplaneFastMcpAuth", () => {
       prmDocumentUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
+      resourceMetadataUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
     } as unknown as AuthplaneResource;
     const mockClient = {
       resource: vi.fn(() => mockResource),
@@ -590,6 +621,9 @@ describe("authplaneFastMcpAuth", () => {
         bearer_methods_supported: ["header"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;
@@ -650,6 +684,9 @@ describe("authplaneFastMcpAuth", () => {
         bearer_methods_supported: ["header"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;
@@ -717,6 +754,9 @@ describe("authplaneFastMcpAuth", () => {
       prmDocumentUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
+      resourceMetadataUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
     } as unknown as AuthplaneResource;
     const mockClient = {
       resource: vi.fn(() => mockResource),
@@ -770,6 +810,9 @@ describe("authplaneFastMcpAuth", () => {
       prmDocumentUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
+      resourceMetadataUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
     } as unknown as AuthplaneResource;
     const mockClient = {
       resource: vi.fn(() => mockResource),
@@ -797,6 +840,9 @@ describe("authplaneFastMcpAuth", () => {
         bearer_methods_supported: ["header"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;
@@ -832,6 +878,9 @@ describe("authplaneFastMcpAuth", () => {
         bearer_methods_supported: ["header"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;
@@ -873,6 +922,9 @@ describe("authplaneFastMcpAuth", () => {
       prmDocumentUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
+      resourceMetadataUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
     } as unknown as AuthplaneResource;
     const mockClient = {
       resource: vi.fn(() => mockResource),
@@ -903,6 +955,9 @@ describe("authplaneFastMcpAuth", () => {
         bearer_methods_supported: ["header"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;
@@ -936,6 +991,9 @@ describe("authplaneFastMcpAuth", () => {
         bearer_methods_supported: ["header"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;
@@ -981,6 +1039,9 @@ describe("authplaneFastMcpAuth", () => {
         bearer_methods_supported: ["header"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;
@@ -1050,6 +1111,9 @@ describe("authplaneFastMcpAuth", () => {
       prmDocumentUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
+      resourceMetadataUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
     } as unknown as AuthplaneResource;
     const mockClient = {
       resource: vi.fn(() => mockResource),
@@ -1086,6 +1150,9 @@ describe("authplaneFastMcpAuth", () => {
         bearer_methods_supported: ["header"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;
@@ -1129,6 +1196,9 @@ describe("authplaneFastMcpAuth", () => {
           bearer_methods_supported: ["header"],
         })),
         prmDocumentUrl: vi.fn(
+          () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+        ),
+        resourceMetadataUrl: vi.fn(
           () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
         ),
       } as unknown as AuthplaneResource;
@@ -1195,3 +1265,237 @@ describe("authplaneFastMcpAuth", () => {
   });
 });
 
+/**
+ * A mock client whose `resource()` calls through to the real core constructor.
+ *
+ * The stub clients elsewhere in this file cannot reject anything, so a test
+ * built on one would pass whether or not the RFC 8707 §2 gate exists. The
+ * client-owned collaborators are stubbed because the indicator gate runs first
+ * in the constructor and nothing here dereferences them.
+ */
+function realResourceClient(): AuthplaneClient {
+  return {
+    resource: (options: AuthplaneResourceOptions) =>
+      new AuthplaneResource({
+        ...options,
+        issuer: "https://auth.example.com",
+        metadataCache: {},
+        fetchSettings: {},
+        getJwksCache: () => ({}),
+      } as unknown as ConstructorParameters<typeof AuthplaneResource>[0]),
+    exchange: vi.fn(),
+    close: vi.fn(async () => undefined),
+  } as unknown as AuthplaneClient;
+}
+
+describe("authplaneFastMcpAuth resource indicator (RFC 8707 §2)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("rejects a fragment-bearing explicit resource at setup", async () => {
+    vi.spyOn(AuthplaneClient, "create").mockResolvedValue(realResourceClient());
+
+    await expect(
+      authplaneFastMcpAuth({
+        issuer: "https://auth.example.com",
+        resource: "https://api.example.com/mcp#frag",
+        scopes: ["tools/add"],
+      }),
+    ).rejects.toThrow(/RFC 8707 §2/u);
+  });
+
+  it("rejects a relative explicit resource at setup through the same gate", async () => {
+    vi.spyOn(AuthplaneClient, "create").mockResolvedValue(realResourceClient());
+
+    await expect(
+      authplaneFastMcpAuth({
+        issuer: "https://auth.example.com",
+        resource: "/mcp",
+        scopes: ["tools/add"],
+      }),
+    ).rejects.toThrow(/absolute URL with a scheme and a host/u);
+  });
+
+  it("rejects a fragment inherited from baseUrl during derivation", async () => {
+    // `deriveResource` concatenates `baseUrl` and `mcpPath` as strings, so a
+    // fragment on `baseUrl` ends up *inside* the derived identifier
+    // (`https://api.example.com#frag/mcp`) rather than at the end of it. The
+    // gate is a raw-string check precisely so that shape is caught too.
+    vi.spyOn(AuthplaneClient, "create").mockResolvedValue(realResourceClient());
+
+    await expect(
+      authplaneFastMcpAuth({
+        issuer: "https://auth.example.com",
+        baseUrl: "https://api.example.com#frag",
+        mcpPath: "/mcp",
+        scopes: ["tools/add"],
+      }),
+    ).rejects.toThrow(/RFC 8707 §2/u);
+  });
+
+  it("builds normally for the same identifier without a fragment", async () => {
+    // Guards the tests above against passing vacuously on a broken harness.
+    vi.spyOn(AuthplaneClient, "create").mockResolvedValue(realResourceClient());
+
+    const auth = await authplaneFastMcpAuth({
+      issuer: "https://auth.example.com",
+      resource: "https://api.example.com/mcp",
+      scopes: ["tools/add"],
+    });
+
+    expect(auth.protectedResourceMetadataUrl).toBe(
+      "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+    );
+  });
+});
+
+describe("authplaneFastMcpAuth query-bearing resource (RFC 9728 §3)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("derives the query-bearing document URL and advertises it on the 401", async () => {
+    // End-to-end through the real core derivation (`realResourceClient`): the
+    // challenge's `resource_metadata` value must carry the query verbatim —
+    // that URL is the one a client round-trips against the served document's
+    // `resource` member (RFC 9728 §3.3).
+    vi.spyOn(AuthplaneClient, "create").mockResolvedValue(realResourceClient());
+
+    const auth = await authplaneFastMcpAuth({
+      issuer: "https://auth.example.com",
+      resource: "https://api.example.com/mcp?tenant=a",
+      scopes: ["tools/add"],
+    });
+
+    expect(auth.protectedResourceMetadataUrl).toBe(
+      "https://api.example.com/.well-known/oauth-protected-resource/mcp?tenant=a",
+    );
+    expect(auth.protectedResourceMetadata.resource).toBe(
+      "https://api.example.com/mcp?tenant=a",
+    );
+
+    try {
+      await auth.authenticate(createRequest() as never);
+      throw new Error("expected authenticate to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Response);
+      const response = error as Response;
+      expect(response.status).toBe(401);
+      expect(response.headers.get("WWW-Authenticate")).toContain(
+        'resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp?tenant=a"',
+      );
+    }
+  });
+});
+
+describe("authplaneFastMcpAuth resource_metadata override (RFC 9728 §3)", () => {
+  const AS_HOSTED =
+    "https://auth.example.com/.well-known/oauth-protected-resource/mcp";
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("advertises the configured URL on the 401 and leaves the served document alone", async () => {
+    // Real core resource, so the option travels the path it travels in
+    // production: adapter option → `client.resource()` → the constructor's
+    // gate → the accessor the challenge reads.
+    vi.spyOn(AuthplaneClient, "create").mockResolvedValue(realResourceClient());
+
+    const auth = await authplaneFastMcpAuth({
+      issuer: "https://auth.example.com",
+      resource: "https://api.example.com/mcp",
+      scopes: ["tools/add"],
+      resourceMetadataUrl: AS_HOSTED,
+    });
+
+    expect(auth.protectedResourceMetadataUrl).toBe(AS_HOSTED);
+    // RFC 9728 §3.3 binds the document's `resource` member to the identifier
+    // the client used, whoever serves the document.
+    expect(auth.protectedResourceMetadata.resource).toBe(
+      "https://api.example.com/mcp",
+    );
+
+    try {
+      await auth.authenticate(createRequest() as never);
+      throw new Error("expected authenticate to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Response);
+      expect((error as Response).status).toBe(401);
+      expect((error as Response).headers.get("WWW-Authenticate")).toContain(
+        `resource_metadata="${AS_HOSTED}"`,
+      );
+    }
+  });
+
+  it("advertises it on the 403 insufficient_scope challenge too", async () => {
+    const claims = new VerifiedClaims({
+      sub: "user_123",
+      clientId: "client_456",
+      scopes: ["tools/add"],
+      issuer: "https://auth.example.com",
+      audience: ["https://api.example.com/mcp"],
+      expiresAt: 1700000000,
+      issuedAt: 1699999000,
+      jti: "token_123",
+      kid: "key_1",
+      agentId: "",
+      agentChain: [],
+      notBefore: 0,
+      raw: { sub: "user_123" },
+    });
+
+    const mockResource = {
+      verify: vi.fn(async () => claims),
+      prmResponse: vi.fn(() => ({
+        resource: "https://api.example.com/mcp",
+        authorization_servers: ["https://auth.example.com"],
+        scopes_supported: ["tools/add", "tools/admin"],
+        bearer_methods_supported: ["header"],
+        resource_signing_alg_values_supported: ["RS256", "ES256"],
+      })),
+      prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(() => AS_HOSTED),
+    } as unknown as AuthplaneResource;
+
+    vi.spyOn(AuthplaneClient, "create").mockResolvedValue({
+      resource: vi.fn(() => mockResource),
+      exchange: vi.fn(),
+    } as unknown as AuthplaneClient);
+
+    const auth = await authplaneFastMcpAuth({
+      issuer: "https://auth.example.com",
+      resource: "https://api.example.com/mcp",
+      scopes: ["tools/add", "tools/admin"],
+      requiredScopes: ["tools/admin"],
+    });
+
+    try {
+      await auth.authenticate(createRequest("Bearer valid_jwt") as never);
+      throw new Error("expected authenticate to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Response);
+      const response = error as Response;
+      expect(response.status).toBe(403);
+      const wwwAuth = response.headers.get("WWW-Authenticate") ?? "";
+      expect(wwwAuth).toContain('error="insufficient_scope"');
+      expect(wwwAuth).toContain(`resource_metadata="${AS_HOSTED}"`);
+    }
+  });
+
+  it("rejects an invalid override at setup, not per request", async () => {
+    vi.spyOn(AuthplaneClient, "create").mockResolvedValue(realResourceClient());
+
+    await expect(
+      authplaneFastMcpAuth({
+        issuer: "https://auth.example.com",
+        resource: "https://api.example.com/mcp",
+        scopes: ["tools/add"],
+        resourceMetadataUrl: "https://auth.example.com/prm#frag",
+      }),
+    ).rejects.toThrow(/fragment component/u);
+  });
+});

@@ -38,6 +38,9 @@ describe("authplaneMcpAuth integration", () => {
       prmDocumentUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
+      resourceMetadataUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
     } as unknown as AuthplaneResource;
 
     const mockClient = {
@@ -99,6 +102,9 @@ describe("authplaneMcpAuth integration", () => {
         bearer_methods_supported: ["header"],
       })),
       prmDocumentUrl: vi.fn(
+        () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+      ),
+      resourceMetadataUrl: vi.fn(
         () => "https://api.example.com/.well-known/oauth-protected-resource/mcp",
       ),
     } as unknown as AuthplaneResource;

@@ -1,6 +1,7 @@
 import {
 	AuthplaneClient,
-	type AuthplaneResource,
+	AuthplaneResource,
+	type AuthplaneResourceOptions,
 	type DPoPReplayStore,
 	TokenExpired,
 	VerifiedClaims,
@@ -35,6 +36,7 @@ function buildClaims(
 function mockResource(
 	overrides: Partial<{
 		prmDocumentUrl: string;
+		resourceMetadataUrl: string;
 		prmResponse: Record<string, unknown>;
 		verify: ReturnType<typeof vi.fn>;
 	}> = {},
@@ -42,6 +44,9 @@ function mockResource(
 	const url =
 		overrides.prmDocumentUrl ??
 		"https://api.example.com/.well-known/oauth-protected-resource/mcp";
+	// Defaults to the derived URL, as the core accessor does when no override
+	// is configured; pass it explicitly to model a configured one.
+	const advertisedUrl = overrides.resourceMetadataUrl ?? url;
 	const prm = overrides.prmResponse ?? {
 		resource: "https://api.example.com/mcp",
 		authorization_servers: ["https://auth.example.com"],
@@ -52,6 +57,7 @@ function mockResource(
 		verify: overrides.verify ?? vi.fn(async () => buildClaims()),
 		prmResponse: vi.fn(() => prm),
 		prmDocumentUrl: vi.fn(() => url),
+		resourceMetadataUrl: vi.fn(() => advertisedUrl),
 	} as unknown as AuthplaneResource;
 }
 
@@ -305,6 +311,8 @@ describe("authplaneHonoAuth", () => {
 		const resource = mockResource({
 			prmDocumentUrl:
 				"https://api.example.com/.well-known/oauth-protected-resource/mcp",
+			resourceMetadataUrl:
+				"https://api.example.com/.well-known/oauth-protected-resource/mcp",
 		});
 		const client = mockClient(resource);
 		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(client);
@@ -332,6 +340,7 @@ describe("authplaneHonoAuth", () => {
 			"https://api.example.com/.well-known/oauth-protected-resource/mcp";
 		const resource = mockResource({
 			prmDocumentUrl: prmUrl,
+			resourceMetadataUrl: prmUrl,
 			// Token clears the global scope gate (tools/read) but lacks the
 			// per-route scope the handler demands (tools/add).
 			verify: vi.fn(async () => buildClaims({ scopes: ["tools/read"] })),
@@ -432,7 +441,7 @@ describe("authplaneHonoAuth", () => {
 		const response = await app.request("/");
 		expect(response.status).toBe(401);
 		expect(response.headers.get("WWW-Authenticate")).toBe(
-			'Bearer realm="https://api.example.com/mcp", error="invalid_token", error_description="Token has expired", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp"',
+			'Bearer realm="https://api.example.com/mcp", error="invalid_token", error_description="The access token is missing or not valid for this resource", resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp"',
 		);
 	});
 
@@ -464,5 +473,285 @@ describe("authplaneHonoAuth", () => {
 		expect(response.headers.get("WWW-Authenticate")).toContain(
 			'error="invalid_token"',
 		);
+	});
+});
+
+/**
+ * A mock client whose `resource()` calls through to the real core constructor.
+ *
+ * `mockClient` above returns a stub that cannot reject anything, so a test
+ * built on it would pass whether or not the RFC 8707 §2 gate exists. The
+ * client-owned collaborators are stubbed because the indicator gate runs first
+ * in the constructor and nothing else in this suite dereferences them.
+ */
+function realResourceClient(): AuthplaneClient {
+	return {
+		resource: (options: AuthplaneResourceOptions) =>
+			new AuthplaneResource({
+				...options,
+				issuer: "https://auth.example.com",
+				metadataCache: {},
+				fetchSettings: {},
+				getJwksCache: () => ({}),
+			} as unknown as ConstructorParameters<typeof AuthplaneResource>[0]),
+		close: vi.fn(async () => undefined),
+	} as unknown as AuthplaneClient;
+}
+
+describe("authplaneHonoAuth resource indicator (RFC 8707 §2)", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("rejects a fragment-bearing resource at setup, not per request", async () => {
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(
+			realResourceClient(),
+		);
+
+		await expect(
+			authplaneHonoAuth({
+				issuer: "https://auth.example.com",
+				resource: "https://api.example.com/mcp#frag",
+				scopes: ["tools/add"],
+			}),
+		).rejects.toThrow(/RFC 8707 §2/u);
+	});
+
+	it("rejects a relative resource at setup through the same gate", async () => {
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(
+			realResourceClient(),
+		);
+
+		await expect(
+			authplaneHonoAuth({
+				issuer: "https://auth.example.com",
+				resource: "/mcp",
+				scopes: ["tools/add"],
+			}),
+		).rejects.toThrow(/absolute URL with a scheme and a host/u);
+	});
+
+	it("builds normally for the same identifier without a fragment", async () => {
+		// Guards the test above against passing vacuously on a broken harness.
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(
+			realResourceClient(),
+		);
+
+		const auth = await authplaneHonoAuth({
+			issuer: "https://auth.example.com",
+			resource: "https://api.example.com/mcp",
+			scopes: ["tools/add"],
+		});
+
+		expect(auth.protectedResourceMetadataPath).toBe(
+			"/.well-known/oauth-protected-resource/mcp",
+		);
+	});
+});
+
+describe("authplaneHonoAuth query-bearing resource (RFC 9728 §3)", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("registers the query-less PRM route and advertises the query-bearing document URL on the 401", async () => {
+		// End-to-end through the real core derivation (`realResourceClient`):
+		// route registration is path-keyed, so the mount path must shed the
+		// query, while the challenge's `resource_metadata` value must carry it
+		// verbatim — that URL is the one a client round-trips against the
+		// served document's `resource` member (RFC 9728 §3.3).
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(
+			realResourceClient(),
+		);
+
+		const auth = await authplaneHonoAuth({
+			issuer: "https://auth.example.com",
+			resource: "https://api.example.com/mcp?tenant=a",
+			scopes: ["tools/add"],
+		});
+
+		expect(auth.protectedResourceMetadataPath).toBe(
+			"/.well-known/oauth-protected-resource/mcp",
+		);
+
+		const { Hono } = await import("hono");
+		const app = new Hono();
+		app.get(
+			auth.protectedResourceMetadataPath,
+			auth.protectedResourceMetadataHandler,
+		);
+		app.use("/mcp", auth.bearerAuth);
+		app.post("/mcp", (c) => c.json({ ok: true }));
+
+		const prmResponse = await app.request(auth.protectedResourceMetadataPath);
+		expect(prmResponse.status).toBe(200);
+		const prmBody = (await prmResponse.json()) as { resource: string };
+		expect(prmBody.resource).toBe("https://api.example.com/mcp?tenant=a");
+
+		const unauthorized = await app.request("/mcp", { method: "POST" });
+		expect(unauthorized.status).toBe(401);
+		expect(unauthorized.headers.get("WWW-Authenticate")).toContain(
+			'resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp?tenant=a"',
+		);
+	});
+});
+
+describe("authplaneHonoAuth non-special-scheme resource (RFC 8707 §2)", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("derives the PRM wiring from protocol + host — never the literal 'null'", async () => {
+		// End-to-end through the real core derivation (`realResourceClient`):
+		// WHATWG `URL.origin` is "null" for a non-special scheme, so both the
+		// mount path and the advertised document URL must come from
+		// `protocol` + `host`.
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(
+			realResourceClient(),
+		);
+
+		const auth = await authplaneHonoAuth({
+			issuer: "https://auth.example.com",
+			resource: "mcp://api.example.com/mcp",
+			scopes: ["tools/add"],
+		});
+
+		expect(auth.protectedResourceMetadataPath).toBe(
+			"/.well-known/oauth-protected-resource/mcp",
+		);
+
+		const { Hono } = await import("hono");
+		const app = new Hono();
+		app.use("/mcp", auth.bearerAuth);
+		app.post("/mcp", (c) => c.json({ ok: true }));
+
+		const unauthorized = await app.request("/mcp", { method: "POST" });
+		expect(unauthorized.status).toBe(401);
+		expect(unauthorized.headers.get("WWW-Authenticate")).toContain(
+			'resource_metadata="mcp://api.example.com/.well-known/oauth-protected-resource/mcp"',
+		);
+	});
+
+	it("anchors the DPoP htu at protocol + host of the configured resource", async () => {
+		const resource = mockResource({
+			prmDocumentUrl:
+				"mcp://api.example.com/.well-known/oauth-protected-resource/mcp",
+			resourceMetadataUrl:
+				"mcp://api.example.com/.well-known/oauth-protected-resource/mcp",
+		});
+		const client = mockClient(resource);
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(client);
+		const verifyMock = resource.verify as ReturnType<typeof vi.fn>;
+
+		const { bearerAuth } = await authplaneHonoAuth({
+			issuer: "https://auth.example.com",
+			resource: "mcp://api.example.com/mcp",
+		});
+
+		const { Hono } = await import("hono");
+		const app = new Hono();
+		app.use("/mcp", bearerAuth);
+		app.post("/mcp", (c) => c.json({ ok: true }));
+
+		await app.request("/mcp", {
+			method: "POST",
+			headers: {
+				Authorization: "Bearer valid_jwt",
+				DPoP: "eyJ.proof.value",
+			},
+		});
+
+		// The htu anchor is the configured resource's protocol + host — with
+		// an origin-keyed derivation this would have been "null/mcp".
+		expect(verifyMock).toHaveBeenCalledWith("valid_jwt", {
+			dpopRequest: expect.objectContaining({
+				url: "mcp://api.example.com/mcp",
+			}),
+		});
+	});
+});
+
+describe("authplaneHonoAuth resource_metadata override (RFC 9728 §3)", () => {
+	const AS_HOSTED =
+		"https://auth.example.com/.well-known/oauth-protected-resource/mcp";
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("carries the configured URL on both the 401 and the 403 challenge", async () => {
+		// The two challenges are built in different places — the verification
+		// path inside `bearerAuth`, the handler-raised one inside
+		// `auth.onError` — and the factory binds both from the same accessor,
+		// so an override that reached only one of them would be a drift bug.
+		const resource = mockResource({
+			resourceMetadataUrl: AS_HOSTED,
+			verify: vi.fn(async () => buildClaims({ scopes: ["tools/read"] })),
+		});
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(
+			mockClient(resource),
+		);
+
+		const auth = await authplaneHonoAuth({
+			issuer: "https://auth.example.com",
+			resource: "https://api.example.com/mcp",
+			scopes: ["tools/read"],
+		});
+
+		const { Hono } = await import("hono");
+		const app = new Hono<{ Variables: HonoAuthVariables }>();
+		app.use("/mcp", auth.bearerAuth);
+		app.post("/mcp", (c) => {
+			requireScope(c, "tools/add");
+			return c.json({ ok: true });
+		});
+		app.onError(auth.onError);
+
+		const unauthenticated = await app.request("/mcp", { method: "POST" });
+		expect(unauthenticated.status).toBe(401);
+		const forbidden = await app.request("/mcp", {
+			method: "POST",
+			headers: { Authorization: "Bearer valid_jwt" },
+		});
+		expect(forbidden.status).toBe(403);
+
+		for (const response of [unauthenticated, forbidden]) {
+			expect(response.headers.get("WWW-Authenticate")).toContain(
+				`resource_metadata="${AS_HOSTED}"`,
+			);
+		}
+		// The local PRM route does not move with the advertisement.
+		expect(auth.protectedResourceMetadataPath).toBe(
+			"/.well-known/oauth-protected-resource/mcp",
+		);
+	});
+
+	it("forwards the option to the core resource and rejects an invalid one at setup", async () => {
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(
+			realResourceClient(),
+		);
+
+		const auth = await authplaneHonoAuth({
+			issuer: "https://auth.example.com",
+			resource: "https://api.example.com/mcp",
+			scopes: ["tools/read"],
+			resourceMetadataUrl: AS_HOSTED,
+		});
+		expect(auth.verifier.resourceMetadataUrl()).toBe(AS_HOSTED);
+		expect(auth.verifier.prmDocumentUrl()).toBe(
+			"https://api.example.com/.well-known/oauth-protected-resource/mcp",
+		);
+
+		vi.spyOn(AuthplaneClient, "create").mockResolvedValue(
+			realResourceClient(),
+		);
+		await expect(
+			authplaneHonoAuth({
+				issuer: "https://auth.example.com",
+				resource: "https://api.example.com/mcp",
+				scopes: ["tools/read"],
+				resourceMetadataUrl: "//auth.example.com/prm",
+			}),
+		).rejects.toThrow(/absolute URL with a scheme and a host/u);
 	});
 });

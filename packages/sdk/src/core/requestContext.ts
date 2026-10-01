@@ -18,7 +18,11 @@ export interface BuildRequestUrlParams {
 	readonly pathAndQuery: string;
 	/**
 	 * The origin (scheme + authority) of the configured resource URL — e.g.
-	 * `"https://api.example.com"`. Use `new URL(resource).origin`.
+	 * `"https://api.example.com"`. Build it as
+	 * `` `${u.protocol}//${u.host}` `` from `new URL(resource)`, not
+	 * `URL.origin`: `origin` is the literal string `"null"` for a non-special
+	 * scheme such as `mcp:`, which the resource-indicator gate accepts, and a
+	 * `"null"`-anchored `htu` fails verification for every DPoP-bound request.
 	 */
 	readonly resourceOrigin: string;
 }

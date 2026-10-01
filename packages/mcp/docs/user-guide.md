@@ -7,6 +7,7 @@ Complete reference for the Authplane adapter for the official MCP TypeScript SDK
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [`authplaneMcpAuth(options)` reference](#authplanemcpauthoptions-reference)
+- [Where the PRM document lives](#where-the-prm-document-lives)
 - [Scope enforcement](#scope-enforcement)
 - [Per-tool scope enforcement with `requireScope`](#per-tool-scope-enforcement-with-requirescope)
 - [URL elicitation for consent-required flows](#url-elicitation-for-consent-required-flows)
@@ -99,6 +100,7 @@ The adapter produces:
 | `revocationChecker` | `RevocationChecker \| IntrospectionRevocation` (optional) | Enable real-time revocation checking. See [Introspection and revocation](#introspection-and-revocation). |
 | `inboundDPoP` | `InboundDPoPOptions` (optional) | Per-resource inbound DPoP policy (RFC 9449 §7.1 + RFC 9728 §2). Presence is the on/off switch for advertising DPoP support in PRM and for accepting DPoP-bound tokens. See [DPoP-bound tokens](#dpop-bound-tokens). |
 | `failClosed` | `boolean` (optional, default `false`) | When `true`, revocation-checker errors reject the token (`TokenRevoked`) instead of accepting it. |
+| `resourceMetadataUrl` | `string` (optional) | Absolute URL advertised as `resource_metadata=` on every challenge, overriding the URL derived from `resource`. See [Where the PRM document lives](#where-the-prm-document-lives). |
 | `allowedAlgorithms` | `string[]` (optional) | Allowed JWT `alg` values. Dangerous algorithms (`none`, `HS*`) are always rejected. Defaults to the SDK allow-list. |
 | `clockSkewSeconds` | `number` (optional) | Applied to `exp`/`nbf`/`iat` checks. DPoP proof age uses `inboundDPoP.clockSkewSeconds` independently. |
 
@@ -112,9 +114,23 @@ The adapter produces:
 | `verifier` | `AuthplaneResource` | The resource primitive; call `verifier.verify(token)` directly if you need to bypass the middleware. |
 | `tokenVerifier` | `AuthplaneTokenVerifier` | MCP SDK `OAuthTokenVerifier` implementation — use it if you're wiring middleware manually with `requireBearerAuth({ verifier: tokenVerifier, requiredScopes: [...], resourceMetadataUrl })`, or handing a verifier to another MCP host framework. Set `resourceMetadataUrl` — without it the stock middleware omits the `resource_metadata` hint from 401 challenges and clients can't start discovery. Failures surface as MCP SDK error classes; see [Error handling](#error-handling). |
 | `bearerAuth` | `RequestHandler` | Ready-to-use Express middleware. Verifies token, enforces scopes, attaches `req.auth`. |
-| `protectedResourceMetadataPath` | `string` | Express route path where the PRM should be served (e.g. `/.well-known/oauth-protected-resource/mcp`). |
+| `protectedResourceMetadataPath` | `string` | Express route path where the PRM should be served (e.g. `/.well-known/oauth-protected-resource/mcp`). Always derived from `resource`, even when `resourceMetadataUrl` points elsewhere. |
+| `protectedResourceMetadataUrl` | `string` | URL advertised as `resource_metadata=`. Pass it to `requireBearerAuth({ ..., resourceMetadataUrl })` when wiring the stock MCP SDK middleware, so both paths advertise the same document. |
 | `protectedResourceMetadata` | `ProtectedResourceMetadata` | The PRM JSON payload. |
 | `protectedResourceMetadataHandler` | `RequestHandler` | Express handler that serves the PRM. |
+
+## Where the PRM document lives
+
+RFC 9728 does not say who has to host the metadata document, only what a client finds when it follows the `resource_metadata` parameter of a `WWW-Authenticate` challenge. Two topologies work.
+
+**(a) Resource-hosted — the default.** This server serves the document itself at the URL derived from `resource`, `/.well-known/oauth-protected-resource[/path]`, and every challenge points there. Nothing to configure. Mount `protectedResourceMetadataHandler` at `protectedResourceMetadataPath`, as the quickstart does.
+
+**(b) AS-hosted.** `authserver` >= 0.2.0 serves an RFC 9728 document for every registered Resource at `<issuer>/.well-known/oauth-protected-resource/{ref}`, where `{ref}` is the Resource URI's path suffix (RFC 9728 §3.1) or its slug. Set `resourceMetadataUrl` to that URL and this server stops advertising its own; it only points at the AS's. Use it when the resource server cannot host well-known paths — a platform that owns `/.well-known`, a proxy that strips it, a resource mounted under a path it does not control.
+
+Only the advertisement moves. `protectedResourceMetadataPath` and `protectedResourceMetadataHandler` are unchanged, so the local document keeps being served, and `protectedResourceMetadata.resource` still names this server's identifier. So the two documents can be served side by side during a migration, and switching back is a config change.
+
+Whichever hosts it, RFC 9728 §3.3 binds the document to this server: the `resource` value **inside** the document must equal the URL clients call, byte for byte, or a conformant client discards the document — and the resource server then looks unreachable rather than misconfigured. So the Resource URI registered at the authorization server, the `resource` configured here, and this server's public URL must be the same string; a trailing slash or an `http`/`https` difference is enough to break it.
+
 
 ## Scope enforcement
 
@@ -150,7 +166,20 @@ server.tool(
 );
 ```
 
-`requireScope` throws if the scope is absent from `extra.authInfo?.scopes`.
+`requireScope` throws core `InsufficientScope` (from `@authplane/sdk/core`) if the scope is absent from `extra.authInfo?.scopes`, carrying the missing scope so a host that maps `AuthplaneError` answers `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="tools/delete_thing"`.
+
+### Where the check runs decides whether the client gets a 403
+
+**An in-handler `requireScope` cannot produce a 403 on the streamable-HTTP transport.** By the time a tool handler runs, the response has started and its status code is committed; the failure can only come back as a JSON-RPC error inside an HTTP 200. Nothing downstream can re-open the status line.
+
+So there are two places to enforce a scope, and they are not interchangeable:
+
+| Where | What the client sees | Use it for |
+|---|---|---|
+| Pre-dispatch — `bearerAuth`'s `requiredScopes`, or your own middleware ahead of the transport | `403` + `WWW-Authenticate: … error="insufficient_scope", scope="…"` | Any scope whose absence should make the client step up and retry |
+| In a tool handler — `requireScope(scope, extra.authInfo)` | JSON-RPC error on HTTP 200 | Defence in depth: the call fails closed and the error names the scope |
+
+If a per-tool scope is meant to trigger step-up, it has to be enforced pre-dispatch. The in-handler helper is a backstop for the case where middleware was misconfigured or a tool was added without its route-level gate — it is worth keeping, but it is not the step-up path.
 
 ## URL elicitation for consent-required flows
 
@@ -196,6 +225,20 @@ The MCP client receives:
 
 Consent errors without a `consentUrl` pass through unchanged; non-consent errors are re-thrown as-is.
 
+**Operator step.** For each MCP server that exchanges for a downstream resource it does not itself act as, the operator must allowlist the exchanging client on the target Resource:
+
+```http
+PATCH /admin/resources/{id}
+{"policy": {"exchange": {"allowed_client_ids": ["<exchanging-client-id>"]}}}
+```
+
+A client exchanging a token issued to itself, a fronted exchange and a Broker resource need nothing.
+
+Two failure answers from the AS are policy, not outages, and neither counts toward the circuit breaker:
+
+- `access_denied` (HTTP 403, `AccessDeniedError`) on a cross-client exchange means the operator has not allowlisted the exchanging client on the target Resource. Unlike `consent_required`, re-prompting the user will not fix it.
+- `invalid_target` (HTTP 400, `InvalidTargetError`, RFC 8707 §2.2) means the `resource` string does not match a granted resource exactly — the comparison is byte for byte, so a trailing slash counts.
+
 ### Escape hatch
 
 For custom consent flows outside `client.exchange()`, `toUrlElicitationRequiredError` is exported as a low-level primitive:
@@ -226,6 +269,14 @@ const auth = await authplaneMcpAuth({
 ```
 
 `IntrospectionRevocation.get()` returns the marker singleton; the underlying `AuthplaneResource` calls `authserver`'s introspection endpoint on each `verify()`, and throws `TokenRevoked` (mapped to MCP's `InvalidTokenError`) when `active: false` is returned. This adds one round-trip per request; use only if eager revocation matters to your threat model.
+
+The introspecting client must be **confidential** (it needs a `clientSecret`) **and** either the client that was issued the token or a runtime-client of the Resource named in the token's `aud`. Since authserver 0.1.2 every other caller — a public (secret-less) client included — receives `{"active": false}`, which the SDK reads as "revoked", so a resource server introspecting with the wrong credentials silently rejects every token. Register the resource server on its Resource with:
+
+```bash
+authserver admin resource runtime-client add --client-id <rs-client-id> --slug <resource-slug>
+```
+
+A public client cannot introspect at all.
 
 You can also pass a custom `RevocationChecker` — an async function `(claims, rawToken) => Promise<boolean>` — for database-backed revocation lists.
 
@@ -326,12 +377,14 @@ The middleware emits a JSON body alongside the `WWW-Authenticate` header:
 
 ```json
 {
-  "error": "invalid_token",       // or "insufficient_scope"
-  "error_description": "<the AuthplaneError.message>"
+  "error": "invalid_token",       // or "insufficient_scope", "invalid_dpop_proof"
+  "error_description": "The access token is missing or not valid for this resource"
 }
 ```
 
 `resource_metadata="…"` is always included so clients can discover the AS; `scope="…"` is included when `requiredScopes` is configured. Non-Authplane errors fall through to a generic 500 (`error: "server_error"`).
+
+Body and challenge are built by the same core helpers, so they name one `error` code and carry one `error_description` — a fixed sentence chosen by that code, never the exception's message. Both halves reach a caller who by definition has not authenticated, and the SDK's messages name the failing detail: the unknown `kid`, the claim that did not validate, the `aud` the resource expects. The message stays on the exception for you to log. There is nothing left to strip in a wrapping middleware.
 
 ### `tokenVerifier` — a host framework owns the response
 

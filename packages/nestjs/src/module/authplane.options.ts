@@ -30,7 +30,7 @@ export interface AuthplaneModuleOptions
 	 * Scopes the guard must enforce at the module level — every request is
 	 * checked against this set. Per-route `@RequireScopes(...)` metadata is
 	 * merged on top. Defaults to `scopes` when not provided, matching the
-	 * Python + Hono + MCP adapters.
+	 * other Authplane adapters.
 	 */
 	requiredScopes?: string[];
 	/**

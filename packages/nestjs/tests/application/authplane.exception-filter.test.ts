@@ -72,6 +72,8 @@ const OPTIONS: AuthplaneModuleOptions = {
 const RESOURCE = {
 	prmDocumentUrl: () =>
 		"https://api.example.com/.well-known/oauth-protected-resource/mcp",
+	resourceMetadataUrl: () =>
+		"https://api.example.com/.well-known/oauth-protected-resource/mcp",
 } as const;
 
 function newFilter(options: AuthplaneModuleOptions = OPTIONS) {
@@ -91,7 +93,8 @@ describe("AuthplaneExceptionFilter — TokenMissing (401)", () => {
 		expect(chain.status).toBe(401);
 		expect(chain.body).toEqual({
 			error: "invalid_token",
-			error_description: "nope",
+			error_description:
+				"The access token is missing or not valid for this resource",
 		});
 		expect(reply.setHeader).toHaveBeenCalledWith(
 			"WWW-Authenticate",
@@ -116,7 +119,8 @@ describe("AuthplaneExceptionFilter — TokenMissing (401)", () => {
 		expect(chain.status).toBe(401);
 		expect(chain.body).toEqual({
 			error: "invalid_token",
-			error_description: "nope",
+			error_description:
+				"The access token is missing or not valid for this resource",
 		});
 		expect(reply.header).toHaveBeenCalledWith(
 			"WWW-Authenticate",
@@ -147,7 +151,8 @@ describe("AuthplaneExceptionFilter — InsufficientScope (403)", () => {
 		expect(chain.status).toBe(403);
 		expect(chain.body).toEqual({
 			error: "insufficient_scope",
-			error_description: "need more",
+			error_description:
+				"The access token does not carry the scope this operation requires",
 		});
 		expect(reply.setHeader).toHaveBeenCalledWith(
 			"WWW-Authenticate",
@@ -229,7 +234,15 @@ describe("AuthplaneExceptionFilter — upstream-failure mapping", () => {
 });
 
 describe("AuthplaneExceptionFilter — header sanitisation", () => {
-	it("strips quote / CR / LF / backslash from interpolated values", () => {
+	// The message no longer reaches `error_description` at all, so the
+	// not-to-contain assertions below can no longer fail on this path and would
+	// pass against any implementation. What this test proves now is the
+	// suppression itself: assert the fixed sentence, and keep the payload
+	// assertions as a regression guard on the whole header rather than as the
+	// point. The sanitiser is still exercised on this path through `realm`, in
+	// the test below, and on the message through `verboseDescription: true` in
+	// `packages/sdk/tests/core/errors.test.ts`.
+	it("emits the fixed description, not the exception message", () => {
 		const { reply } = expressReply();
 		newFilter().catch(
 			new TokenMissing('bad "quotes"\r\nInjected: x\\path'),
@@ -240,12 +253,14 @@ describe("AuthplaneExceptionFilter — header sanitisation", () => {
 		);
 		expect(headerCall).toBeDefined();
 		const value = headerCall?.[1] as string;
+		const matched = value.match(/error_description="([^"]*)"/u);
+		expect(matched?.[1]).toBe(
+			"The access token is missing or not valid for this resource",
+		);
 		expect(value).not.toContain("\r");
 		expect(value).not.toContain("\n");
 		expect(value).not.toContain('"quotes"');
 		expect(value).not.toContain("x\\path");
-		const matched = value.match(/error_description="([^"]*)"/u);
-		expect(matched?.[1]).toBeDefined();
 	});
 
 	it("also sanitises the realm value", () => {
@@ -278,6 +293,9 @@ describe("AuthplaneExceptionFilter — PRM URL handling", () => {
 			prmDocumentUrl: () => {
 				throw new Error("not configured");
 			},
+			resourceMetadataUrl: () => {
+				throw new Error("not configured");
+			},
 		} as const;
 		return new AuthplaneExceptionFilter(
 			OPTIONS,
@@ -287,7 +305,7 @@ describe("AuthplaneExceptionFilter — PRM URL handling", () => {
 		);
 	}
 
-	it("omits resource_metadata when prmDocumentUrl() throws", () => {
+	it("omits resource_metadata when resourceMetadataUrl() throws", () => {
 		const { reply } = expressReply();
 		buildFailingFilter().catch(new TokenMissing("nope"), makeHost(reply));
 		const headerCall = reply.setHeader.mock.calls.find(
@@ -305,7 +323,7 @@ describe("AuthplaneExceptionFilter — PRM URL handling", () => {
 		filter.catch(new TokenMissing("nope"), makeHost(reply2));
 		filter.catch(new TokenMissing("nope"), makeHost(reply3));
 		expect(warnSpy).toHaveBeenCalledTimes(1);
-		expect(warnSpy.mock.calls[0]?.[0]).toContain("prmDocumentUrl() threw");
+		expect(warnSpy.mock.calls[0]?.[0]).toContain("resourceMetadataUrl() threw");
 		expect(warnSpy.mock.calls[0]?.[0]).toContain("not configured");
 	});
 });
@@ -371,5 +389,57 @@ describe("AuthplaneExceptionFilter — @Catch contract", () => {
 		// Importantly, NOT raw Error — that would swallow every HttpException
 		// when the filter is mounted globally.
 		expect(catchMetadata).not.toContain(Error);
+	});
+});
+
+describe("AuthplaneExceptionFilter — configured resource_metadata URL", () => {
+	const AS_HOSTED =
+		"https://auth.example.com/.well-known/oauth-protected-resource/mcp";
+
+	// Models a resource constructed with `resourceMetadataUrl`: the accessor
+	// returns the override while the derived URL — what the PRM controller is
+	// mounted at — stays put.
+	const OVERRIDDEN = {
+		prmDocumentUrl: () =>
+			"https://api.example.com/.well-known/oauth-protected-resource/mcp",
+		resourceMetadataUrl: () => AS_HOSTED,
+	} as const;
+
+	function overriddenFilter() {
+		return new AuthplaneExceptionFilter(
+			OPTIONS,
+			OVERRIDDEN as unknown as ConstructorParameters<
+				typeof AuthplaneExceptionFilter
+			>[1],
+		);
+	}
+
+	it("advertises it on the 401 challenge", () => {
+		const { reply, chain } = expressReply();
+		overriddenFilter().catch(new TokenMissing("nope"), makeHost(reply));
+
+		expect(chain.status).toBe(401);
+		expect(reply.setHeader).toHaveBeenCalledWith(
+			"WWW-Authenticate",
+			expect.stringContaining(`resource_metadata="${AS_HOSTED}"`),
+		);
+	});
+
+	it("advertises it on the 403 insufficient_scope challenge", () => {
+		const { reply, chain } = expressReply();
+		overriddenFilter().catch(
+			new InsufficientScope("Insufficient scope"),
+			makeHost(reply),
+		);
+
+		expect(chain.status).toBe(403);
+		expect(reply.setHeader).toHaveBeenCalledWith(
+			"WWW-Authenticate",
+			expect.stringContaining(`resource_metadata="${AS_HOSTED}"`),
+		);
+		expect(reply.setHeader).toHaveBeenCalledWith(
+			"WWW-Authenticate",
+			expect.stringContaining('scope="tools/add"'),
+		);
 	});
 });

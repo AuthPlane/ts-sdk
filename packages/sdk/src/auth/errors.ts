@@ -62,6 +62,35 @@ export class InvalidRequestError extends AuthError {
 	}
 }
 
+/**
+ * `access_denied` (RFC 6749 §4.1.2.1, returned here by the token endpoint on a
+ * token exchange) — the AS refused the request. Against authserver this means a
+ * cross-client token exchange whose exchanging client is not allowlisted on the
+ * target Resource (`policy.exchange.allowed_client_ids` /
+ * `policy.runtime.client_ids`); that is an operator-side fix, and re-prompting
+ * the user, as for `consent_required`, will not clear it. Another AS may return
+ * it for a resource-owner or policy denial instead. Never counts toward the
+ * circuit breaker.
+ */
+export class AccessDeniedError extends AuthError {
+	public constructor(message: string, statusCode: number | null = null) {
+		super(message, { code: "access_denied", statusCode });
+		this.name = "AccessDeniedError";
+	}
+}
+
+/**
+ * `invalid_target` (RFC 8707 §2.2) — the `resource` sent to the token
+ * endpoint does not match a granted resource byte for byte (a trailing slash
+ * counts). Never counts toward the circuit breaker.
+ */
+export class InvalidTargetError extends AuthError {
+	public constructor(message: string, statusCode: number | null = null) {
+		super(message, { code: "invalid_target", statusCode });
+		this.name = "InvalidTargetError";
+	}
+}
+
 export class ConsentRequiredError extends AuthError {
 	public readonly serviceId: string;
 	public readonly causeDetail: string;
@@ -135,6 +164,8 @@ export function mapOAuthError(
 		invalid_grant: (m, s) => new InvalidGrantError(m, s),
 		unsupported_grant_type: (m, s) => new UnsupportedGrantTypeError(m, s),
 		invalid_request: (m, s) => new InvalidRequestError(m, s),
+		access_denied: (m, s) => new AccessDeniedError(m, s),
+		invalid_target: (m, s) => new InvalidTargetError(m, s),
 	};
 
 	if (statusCode >= 500) {
