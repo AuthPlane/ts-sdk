@@ -51,7 +51,7 @@
 		"test:integration": "vitest run tests/auth.integration.test.ts"
 	},
 	"dependencies": {
-		"fastmcp": "^3.35.0 || ^4.0.0"
+		"fastmcp": "^4.20.17"
 	},
 	"peerDependencies": {
 		"@authplane/sdk": "^0.4.1-dev.0"
@@ -61,7 +61,7 @@
 		"@types/node": "^24.3.0",
 		"@vitest/coverage-v8": "4.1.5",
 		"dotenv": "^17.3.1",
-		"tsx": "^4.20.6",
+		"tsx": "^4.23.15",
 		"typescript": "^5.6.3",
 		"vitest": "4.1.5",
 		"zod": "^3.24.0"
